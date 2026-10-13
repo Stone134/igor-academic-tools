@@ -475,6 +475,60 @@ Function AT_E_AddVref()
 	return AT_E_AddVoltage(2)
 End
 
+Static Function AT_E_IsOverlay(tn)
+	String tn
+	if(cmpstr(tn,"ATvgOverlay")==0 || cmpstr(tn,"ATvrefOverlay")==0)
+		return 1
+	endif
+	if(!stringmatch(tn,"ATvgO_*") && !stringmatch(tn,"ATvrO_*"))
+		return 0
+	endif
+	Variable i,n=strlen(tn)
+	if(n<=6)
+		return 0
+	endif
+	for(i=6;i<n;i+=1)
+		if(!AT_E_IsDigit(char2num(tn[i])))
+			return 0
+		endif
+	endfor
+	return 1
+End
+
+// Keep an existing sample's name; otherwise allocate a short unused trace name.
+Static Function/S AT_E_OverlayName(gName,voltage,kind)
+	String gName
+	WAVE voltage
+	Variable kind
+	String tl=TraceNameList(gName,";",1),tn,info
+	Variable i
+	for(i=0;i<ItemsInList(tl);i+=1)
+		tn=StringFromList(i,tl)
+		if(!AT_E_IsOverlay(tn))
+			continue
+		endif
+		WAVE/Z plotted=TraceNameToWaveRef(gName,tn)
+		info=TraceInfo(gName,tn,0)
+		if(WaveExists(plotted) && cmpstr(StringByKey("YAXIS",info),"right")==0)
+			if(cmpstr(GetWavesDataFolder(plotted,2),GetWavesDataFolder(voltage,2))==0)
+				return tn
+			endif
+		endif
+	endfor
+	String prefix="ATvgO_"
+	if(kind==2)
+		prefix="ATvrO_"
+	endif
+	i=0
+	do
+		tn=prefix+num2istr(i)
+		if(WhichListItem(tn,tl)<0)
+			return tn
+		endif
+		i+=1
+	while(1)
+End
+
 // Optional arguments allow repeatable script-based validation without dialogs.
 Function AT_E_AddVoltage(kind,[gName,currentTrace])
 	Variable kind
@@ -506,22 +560,59 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 		if(cmpstr(GetWavesDataFolder(ix,2),"root:AT_Elec:Data:"+ibase+"_Time")!=0)
 			continue
 		endif
+		String requiredSuffix="_GateV"
+		if(kind==2)
+			requiredSuffix="_Vref"
+		endif
+		WAVE/Z candidateVoltage=$("root:AT_Elec:Data:"+ibase+requiredSuffix)
+		if(!WaveExists(candidateVoltage))
+			continue
+		endif
+		if(numpnts(ix)==0 || numpnts(ix)!=numpnts(candidateVoltage))
+			continue
+		endif
+		WaveStats/Q/M=1 candidateVoltage
+		if(numtype(V_min)!=0 || numtype(V_max)!=0)
+			continue
+		endif
+		WaveStats/Q/M=1 ix
+		if(numtype(V_min)!=0 || numtype(V_max)!=0)
+			continue
+		endif
 		if(cmpstr(StringByKey("YAXIS",info),"left")==0 && cmpstr(StringByKey("XAXIS",info),"bottom")==0)
 			candidates+=tn+";"
 		endif
 	endfor
 	if(ItemsInList(candidates)==0)
-		DoAlert 0,"This graph has no toolbox Id vs time trace. Plot Id vs time first."
+		DoAlert 0,"No plotted toolbox Id/time sample has a valid Time/voltage pair for this option."
 		return -1
 	endif
 	if(ParamIsDefault(currentTrace))
-		Variable choice=1
-		Prompt choice,"Sample (Id trace already in this graph)",popup,candidates
-		DoPrompt "Add grey voltage vs time on right axis",choice
-		if(V_flag)
+		Variable nc=ItemsInList(candidates),selected=0,added=0
+		Make/FREE/T/N=(nc) labels
+		Make/FREE/N=(nc) pick=1
+		for(i=0;i<nc;i+=1)
+			labels[i]=StringFromList(i,candidates)
+		endfor
+		String pickerTitle="Choose samples for grey Vg overlays"
+		if(kind==2)
+			pickerTitle="Choose samples for grey Vref overlays"
+		endif
+		if(AT_E_PickList(pickerTitle,labels,pick)!=0)
 			return -1
 		endif
-		currentTrace=StringFromList(choice-1,candidates)
+		for(i=0;i<nc;i+=1)
+			if(pick[i]!=0)
+				selected+=1
+				if(AT_E_AddVoltage(kind,gName=gName,currentTrace=StringFromList(i,candidates))==0)
+					added+=1
+				endif
+			endif
+		endfor
+		if(selected==0)
+			DoAlert 0,"Nothing was selected."
+		endif
+		return (added>0) ? 0 : -1
 	endif
 	if(WhichListItem(currentTrace,candidates)<0)
 		return -1
@@ -529,10 +620,9 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 	WAVE iy=TraceNameToWaveRef(gName,currentTrace), wx=XWaveRefFromTrace(gName,currentTrace)
 	String base=NameOfWave(iy)
 	base=base[0,strlen(base)-8]
-	String suffix="_GateV", overlay="ATvgOverlay"
+	String suffix="_GateV"
 	if(kind==2)
 		suffix="_Vref"
-		overlay="ATvrefOverlay"
 	endif
 	WAVE/Z wy=$("root:AT_Elec:Data:"+base+suffix)
 	if(!WaveExists(wy))
@@ -576,6 +666,7 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 	if(xmul==0)
 		xmul=1
 	endif
+	String overlay=AT_E_OverlayName(gName,wy,kind)
 	if(WhichListItem(overlay,tl)>=0)
 		RemoveFromGraph/W=$gName $overlay
 	endif
@@ -608,19 +699,54 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 		rightLabel="\\f02V\\BG\\M\\f00, \\f02V\\Bref\\M\\f00 (V)"
 	endif
 	Label/W=$gName right rightLabel
-	if(WhichListItem("ATvgOverlay",tl)>=0)
-		WAVE vg=TraceNameToWaveRef(gName,"ATvgOverlay")
-		key="\\s(ATvgOverlay) Vg: "+NameOfWave(vg)+"\r"
-	endif
-	if(WhichListItem("ATvrefOverlay",tl)>=0)
-		WAVE vr=TraceNameToWaveRef(gName,"ATvrefOverlay")
-		key+="\\s(ATvrefOverlay) Vref: "+NameOfWave(vr)
-	endif
+	for(i=0;i<ItemsInList(tl);i+=1)
+		tn=StringFromList(i,tl)
+		if(!AT_E_IsOverlay(tn))
+			continue
+		endif
+		info=TraceInfo(gName,tn,0)
+		if(cmpstr(StringByKey("YAXIS",info),"right")!=0)
+			continue
+		endif
+		WAVE voltage=TraceNameToWaveRef(gName,tn)
+		String vname=NameOfWave(voltage),vkind="Vg"
+		if(stringmatch(vname,"*_Vref"))
+			vkind="Vref"
+			vname=vname[0,strlen(vname)-6]
+		else
+			vname=vname[0,strlen(vname)-7]
+		endif
+		key+="\\s("+tn+") "+vkind+": "+vname+"\r"
+	endfor
 	Legend/W=$gName/C/N=ATvoltageLegend/F=0/A=RB RemoveEnding(key,"\r")
 	return 0
 End
 
 Function AT_E_PlotVref()
+	return AT_E_PlotVoltageTime(2)
+End
+
+Function AT_E_PlotVg()
+	return AT_E_PlotVoltageTime(1)
+End
+
+// Without bases, show the usual selection/style dialogs. Optional bases is a
+// semicolon-separated list of loaded base names for scriptable validation.
+Function AT_E_PlotVoltageTime(kind,[bases,zeroT,revY,colorMode,showLeg])
+	Variable kind,zeroT,revY,colorMode,showLeg
+	String bases
+	if(kind!=1 && kind!=2)
+		return -1
+	endif
+	String suffix="_GateV",stem="gVg",titleStr="Gate voltage vs time"
+	String yLabel="\\f02V\\BG\\M\\f00 (V)",reversePrompt="Reverse Vg axis?"
+	if(kind==2)
+		suffix="_Vref"
+		stem="gVref"
+		titleStr="Reference-electrode voltage vs time"
+		yLabel="\\f02V\\Bref\\M\\f00 (V)"
+		reversePrompt="Reverse Vref axis?"
+	endif
 
 	WAVE/Z/T chk = root:AT_Elec:BaseName
 	if (!WaveExists(chk))
@@ -637,11 +763,19 @@ Function AT_E_PlotVref()
 	String catFilter = "*"
 	Variable pickMode = 2
 	NVAR savedGradient=root:Packages:AcademicToolbox:gradient
-	Variable colorMode = savedGradient+3
+	if(ParamIsDefault(colorMode))
+		colorMode=savedGradient+3
+	endif
 	Variable lw = gLW
-	Variable zeroT = 1
-	Variable showLeg = 1
-	Variable revY=1
+	if(ParamIsDefault(zeroT))
+		zeroT=1
+	endif
+	if(ParamIsDefault(showLeg))
+		showLeg=1
+	endif
+	if(ParamIsDefault(revY))
+		revY=1
+	endif
 
 	Prompt catFilter,  "Category filter ( * = all )"
 	Prompt pickMode,   "Data selection", popup, "Everything matching the filter;Choose from a list..."
@@ -649,10 +783,12 @@ Function AT_E_PlotVref()
 	Prompt lw,         "Line thickness (pt)"
 	Prompt zeroT,      "Shift every trace so t starts at 0?", popup, "Yes;No"
 	Prompt showLeg,    "Legend", popup, "Show;Hide"
-	Prompt revY,"Reverse Vref axis?",popup,"Yes;No"
-	DoPrompt "Reference-electrode voltage vs time", catFilter, pickMode, colorMode, lw, zeroT, showLeg, revY
-	if (V_flag)
-		return -1
+	Prompt revY,reversePrompt,popup,"Yes;No"
+	if(ParamIsDefault(bases))
+		DoPrompt titleStr, catFilter, pickMode, colorMode, lw, zeroT, showLeg, revY
+		if (V_flag)
+			return -1
+		endif
 	endif
 
 	WAVE/T bnw = root:AT_Elec:BaseName
@@ -666,7 +802,20 @@ Function AT_E_PlotVref()
 	endif
 	Variable m = numpnts(idx)
 
-	if (pickMode == 2)
+	if(!ParamIsDefault(bases))
+		Variable chosen=0,j
+		for(j=0;j<m;j+=1)
+			if(WhichListItem(bnw[idx[j]],bases)>=0)
+				idx[chosen]=idx[j]
+				chosen+=1
+			endif
+		endfor
+		Redimension/N=(chosen) idx
+		m=chosen
+		if(m==0)
+			return -1
+		endif
+	elseif (pickMode == 2)
 		m = AT_E_PickFrom(idx, bnw, ctw, spw)
 		if (m <= 0)
 			return -1
@@ -676,18 +825,18 @@ Function AT_E_PlotVref()
 	Make/FREE/N=(m) ciW, siW, nsW
 	String catList = AT_E_GroupIdx(ctw, idx, ciW, siW, nsW)
 
-	String gName = UniqueName("gVref", 6, 0)
-	Display/N=$gName/W=(40, 40, 40 + gWW, 40 + gWH) as "Reference-electrode voltage vs time"
+	String gName = UniqueName(stem, 6, 0)
+	Display/N=$gName/W=(40, 40, 40 + gWW, 40 + gWH) as titleStr
 
 	Variable nPlot=0
 	Variable i, ymin = inf, ymax = -inf, xmin = inf, xmax = -inf, t0
 	String tn, leg = "", lastCat = ""
 
 	for (i = 0; i < m; i += 1)
-		WAVE/Z wy = root:AT_Elec:Data:$(bnw[idx[i]] + "_Vref")
+		WAVE/Z wy = root:AT_Elec:Data:$(bnw[idx[i]] + suffix)
 		WAVE/Z wx = root:AT_Elec:Data:$(bnw[idx[i]] + "_Time")
 		if (!WaveExists(wx) || !WaveExists(wy))
-			Print "Skipped missing Time/Vref: "+bnw[idx[i]]
+			Print "Skipped missing Time/"+suffix[1,strlen(suffix)-1]+": "+bnw[idx[i]]
 			continue
 		endif
 		if (numpnts(wx)==0 || numpnts(wx)!=numpnts(wy))
@@ -737,12 +886,12 @@ Function AT_E_PlotVref()
 
 	if(nPlot==0)
 		KillWindow $gName
-		DoAlert 0,"No valid Time/Vref pairs. A real Time column is required."
+		DoAlert 0,"No valid Time/voltage pairs. A real Time column is required."
 		return -1
 	endif
 	AT_E_SetNiceAxis(gName, "left",   ymin, ymax, revY==1, 0)		// reversed
 	AT_E_SetNiceAxis(gName, "bottom", xmin, xmax, 0, 1)		// time: 0 -> rounded up
-	AT_E_Style(gName, "Time (s)", "\\f02V\\Bref\\M\\f00 (V)")
+	AT_E_Style(gName, "Time (s)", yLabel)
 	if(colorMode==4 || colorMode==5)
 		AT_E_RecolorGradient(gName,colorMode-3)
 	endif
@@ -1473,13 +1622,13 @@ Function AT_E_RecolorGradient(gName, which)
 	Variable i, n=0, k=0, r, g, b
 	for(i=0;i<ItemsInList(tl);i+=1)
 		tn=StringFromList(i,tl)
-		if(cmpstr(tn,"ATvgOverlay")!=0 && cmpstr(tn,"ATvrefOverlay")!=0)
+		if(!AT_E_IsOverlay(tn) || cmpstr(StringByKey("YAXIS",TraceInfo(gName,tn,0)),"right")!=0)
 			n+=1
 		endif
 	endfor
 	for (i = 0; i < ItemsInList(tl); i += 1)
 		tn = StringFromList(i, tl)
-		if(cmpstr(tn,"ATvgOverlay")==0 || cmpstr(tn,"ATvrefOverlay")==0)
+		if(AT_E_IsOverlay(tn) && cmpstr(StringByKey("YAXIS",TraceInfo(gName,tn,0)),"right")==0)
 			continue
 		endif
 		AT_E_GradColor(which, k, n, r, g, b)
@@ -2607,7 +2756,8 @@ Static Function AT_OpenPanel(oect)
 		Button bSS, win=$panelName, pos={24, 128}, size={340, 26}, proc=AT_Button, title="Plot steady-state Id vs Vg"
 	else
 		Button bIt, win=$panelName, pos={24, 96}, size={340, 26}, proc=AT_Button, title="Plot Id vs time"
-		Button bVref, win=$panelName, pos={24, 128}, size={340, 26}, proc=AT_Button, title="Plot Vref vs time"
+		Button bVg, win=$panelName, pos={24, 128}, size={165, 26}, proc=AT_Button, title="Plot Vg vs time (new)"
+		Button bVref, win=$panelName, pos={199, 128}, size={165, 26}, proc=AT_Button, title="Plot Vref vs time"
 		Button bAddVg, win=$panelName, pos={24, 158}, size={165, 26}, proc=AT_Button, title="Add Vg vs time to graph"
 		Button bAddVref, win=$panelName, pos={199, 158}, size={165, 26}, proc=AT_Button, title="Add Vref vs time to graph"
 	endif
@@ -2676,6 +2826,9 @@ Function AT_Button(ba) : ButtonControl
 			break
 		case "bAddVref":
 			AT_E_AddVref()
+			break
+		case "bVg":
+			AT_E_PlotVg()
 			break
 		case "bVref":
 			AT_E_PlotVref()
@@ -2749,6 +2902,7 @@ Menu "Macros"
 	"Academic Toolbox - Electrical",/Q,AT_ElectricalPanel()
 	"Academic Toolbox - OECT",/Q,AT_OECTPanel()
 	SubMenu "Academic Toolbox - Time overlays"
+		"Plot Vg vs time (new graph)...",/Q,AT_E_PlotVg()
 		"Add Vg vs time to graph...",/Q,AT_E_AddVg()
 		"Add Vref vs time to graph...",/Q,AT_E_AddVref()
 	End
@@ -3081,8 +3235,110 @@ Function AT_SelfTest()
 	AT_E_Style(gn,"Time (s)","I\\BD\\M (µA)")
 	AT_E_ApplyLook(gn,1)
 	AT_E_RecolorGradient(gn,1)
+	AT_TestVoltagePlots()
 	AT_Panel()
 	Print "PASS: gradients 1-25 traces; grid validation; descending XY; seam/anchor; repeatability; raw preservation; steady-state; demo styling."
+	return 0
+End
+
+// Run from AT_SelfTest, which creates these fixtures only in a fresh experiment.
+Function AT_TestVoltagePlots()
+	WAVE/Z ta=root:AT_Elec:Data:testA_Time,tb=root:AT_Elec:Data:testB_Time
+	WAVE/Z ia=root:AT_Elec:Data:testA_DrainI,ib=root:AT_Elec:Data:testB_DrainI
+	WAVE/Z va=root:AT_Elec:Data:testA_GateV,vb=root:AT_Elec:Data:testB_GateV
+	if(!WaveExists(ta) || !WaveExists(tb) || !WaveExists(ia) || !WaveExists(ib) || !WaveExists(va) || !WaveExists(vb))
+		return -1
+	endif
+	// Distinct time origins and voltage curves catch cross-sample alignment errors.
+	ta=3+p
+	tb=7+2*p
+	va=-0.1-0.005*p
+	vb=-0.2-0.002*p
+	Duplicate/FREE ta,saveTA
+	Duplicate/FREE tb,saveTB
+	Duplicate/FREE va,saveVA
+	Duplicate/FREE vb,saveVB
+	Duplicate/O va,root:AT_Elec:Data:testA_Vref
+	String gn=UniqueName("ATmultiCheck",6,0),an=NameOfWave(ia),bn=NameOfWave(ib)
+	Display/N=$gn ia vs ta as "Voltage overlay regression"
+	AppendToGraph/W=$gn ib vs tb
+	ModifyGraph/W=$gn muloffset($an)={1,1e6},offset($an)={-3,0}
+	ModifyGraph/W=$gn muloffset($bn)={2,1e6},offset($bn)={-14,0}
+	if(AT_E_AddVoltage(1,gName=gn,currentTrace=an)!=0 || AT_E_AddVoltage(1,gName=gn,currentTrace=bn)!=0)
+		Abort "FAIL: two-sample Vg overlays"
+	endif
+	if(ItemsInList(TraceNameList(gn,";",1))!=4)
+		Abort "FAIL: second sample replaced first overlay"
+	endif
+	if(AT_E_AddVoltage(1,gName=gn,currentTrace=an)!=0 || ItemsInList(TraceNameList(gn,";",1))!=4)
+		Abort "FAIL: same-sample overlay duplication"
+	endif
+	if(AT_E_AddVoltage(2,gName=gn,currentTrace=an)!=0 || ItemsInList(TraceNameList(gn,";",1))!=5)
+		Abort "FAIL: mixed Vg/Vref overlays"
+	endif
+	AT_E_RecolorGradient(gn,2)
+	String tl=TraceNameList(gn,";",1),tn,info,pair
+	Variable i,n=0,xoff,yoff,xmul,ymul,cr,cg,cb
+	for(i=0;i<ItemsInList(tl);i+=1)
+		tn=StringFromList(i,tl)
+		if(!AT_E_IsOverlay(tn))
+			continue
+		endif
+		n+=1
+		WAVE v=TraceNameToWaveRef(gn,tn),x=XWaveRefFromTrace(gn,tn)
+		info=TraceInfo(gn,tn,0)
+		if(cmpstr(StringByKey("YAXIS",info),"right")!=0)
+			Abort "FAIL: voltage overlay axis"
+		endif
+		xoff=0;yoff=0;xmul=0;ymul=0;cr=0;cg=0;cb=0
+		sscanf StringByKey("offset(x)",info,"="),"{%g,%g}",xoff,yoff
+		sscanf StringByKey("muloffset(x)",info,"="),"{%g,%g}",xmul,ymul
+		sscanf StringByKey("rgb(x)",info,"="),"(%g,%g,%g)",cr,cg,cb
+		Variable isB=cmpstr(NameOfWave(v),"testB_GateV")==0
+		if(xoff!=(-3-11*isB) || xmul!=(1+isB) || yoff!=0 || ymul!=1)
+			Abort "FAIL: sample-specific overlay time alignment"
+		endif
+		if(cmpstr(NameOfWave(x),StringFromList(isB,"testA_Time;testB_Time"))!=0)
+			Abort "FAIL: sample-specific overlay Time wave"
+		endif
+		if(cr!=32768 || cg!=32768 || cb!=32768)
+			Abort "FAIL: gradient recolored grey voltage overlays"
+		endif
+	endfor
+	if(n!=3)
+		Abort "FAIL: voltage overlay count"
+	endif
+	if(AT_E_PlotVoltageTime(1,bases="testA;testB;",zeroT=1,revY=1,colorMode=5,showLeg=1)!=0)
+		Abort "FAIL: standalone Vg plot"
+	endif
+	String vgGraph=WinName(0,1)
+	tl=TraceNameList(vgGraph,";",1)
+	if(ItemsInList(tl)!=2)
+		Abort "FAIL: standalone Vg trace count"
+	endif
+	for(i=0;i<ItemsInList(tl);i+=1)
+		tn=StringFromList(i,tl)
+		WAVE v=TraceNameToWaveRef(vgGraph,tn)
+		if(!stringmatch(NameOfWave(v),"*_GateV"))
+			Abort "FAIL: standalone Vg contains another quantity"
+		endif
+		info=TraceInfo(vgGraph,tn,0)
+		sscanf StringByKey("offset(x)",info,"="),"{%g,%g}",xoff,yoff
+		if(xoff!=(-3-4*(cmpstr(NameOfWave(v),"testB_GateV")==0)))
+			Abort "FAIL: standalone sample-specific time zero"
+		endif
+	endfor
+	DoUpdate
+	GetAxis/W=$vgGraph/Q left
+	if(V_min<=V_max)
+		Abort "FAIL: standalone Vg axis inversion"
+	endif
+	Make/FREE/D/N=(numpnts(ta)) sourceError=abs(ta[p]-saveTA[p])+abs(tb[p]-saveTB[p])+abs(va[p]-saveVA[p])+abs(vb[p]-saveVB[p])
+	WaveStats/Q sourceError
+	if(V_max!=0)
+		Abort "FAIL: voltage plotting changed source values"
+	endif
+	Print "PASS: multi-sample Vg/Vref, per-sample replacement/alignment, grey recoloring, standalone Vg, source preservation."
 	return 0
 End
 

@@ -1,11 +1,11 @@
 # Academic Toolbox for Igor Pro 8
 
-One standalone procedure combines the useful features of all six original files. Electrical and OECT have separate panel selections. This revision fixes loading files whose names contain a colon, uses fixed electrical input units, and adds grey Vg/time and Vref/time overlays to Id/time graphs. Existing Vref plots, UV–vis, styling and extra tools remain available.
+One standalone procedure combines the useful features of all six original files. Electrical and OECT have separate panel selections. Electrical plots include standalone Id/time, Vg/time and Vref/time graphs, plus grey Vg/time and Vref/time overlays for multiple samples in the same Id/time graph. Electrical input units are fixed, and filenames containing a colon are supported. UV–vis, styling and extra tools remain available.
 
 ## Start here
 
 1. In Igor, open `Academic_Toolbox.ipf` as a procedure and compile it. Save it in your User Procedures folder first.
-2. Choose **Macros → Academic Toolbox - Electrical** or **Macros → Academic Toolbox - OECT**. Electrical provides Id/time and Vref/time plots plus voltage overlays; OECT provides transfer and steady-state plots. Both panels share the loaded electrical dataset and preferences, and retain UV–vis and appearance controls. You can also run `AT_ElectricalPanel()`, `AT_OECTPanel()`, or the backward-compatible `AT_Panel()` from the command line (Command–J).
+2. Choose **Macros → Academic Toolbox - Electrical** or **Macros → Academic Toolbox - OECT**. Electrical provides Id/time, Vg/time and Vref/time plots plus voltage overlays; OECT provides transfer and steady-state plots. Both panels share the loaded electrical dataset and preferences, and retain UV–vis and appearance controls. You can also run `AT_ElectricalPanel()`, `AT_OECTPanel()`, or the backward-compatible `AT_Panel()` from the command line (Command–J).
 3. Choose **Red (dark to light)** or **Blue (dark to light)** in the panel. This becomes the default for new toolbox plots.
 4. Use **Load single file(s)…**, followed by **Plot Id vs time** or **Plot spectra**.
 
@@ -35,6 +35,12 @@ Click **Plot Id vs time**. Select the desired files from the list, choose a grad
 
 **Why the supplied file previously failed:** `YZ_B051 s2 Ph2phos -0.1 -0.8V 1800s w: quasi.txt` has a valid tab-separated header on line 0 and 14,401 data points. The failure came from path parsing. On macOS, Igor's colon-separated (HFS) paths represent a literal colon in a filename as `/`. The old separator detector treated that embedded `/` as evidence of a POSIX path, splitting the directory and filename incorrectly. The detector now recognizes a POSIX path by its leading `/`, preserving the embedded filename character in an HFS path. The data file does not need renaming or reformatting.
 
+### Plot gate voltage alone versus time
+
+In **Electrical**, click **Plot Vg vs time (new)**, or choose **Plot Vg vs time (new graph)…** under **Macros → Academic Toolbox - Time overlays**. You can also run `AT_E_PlotVg()`. Select one or more loaded samples using the usual category/filter selection, then choose the gradient, line width, legend and optional time-zero shift.
+
+This creates a new graph containing only the selected samples' gate-voltage traces. It uses the shared academic appearance with **Time (s)** and **Vg (V)** labels. The Vg axis is inverted by default; choose **Reverse Vg axis? → No** for a conventional axis. Time increases left to right, and the data signs are unchanged. Multiple selected samples appear in the same new graph using the chosen colors. Missing, empty, unequal-length or entirely nonfinite Time/GateV pairs are skipped. Time-zero shifting requires a finite first time value. No valid selection produces an alert and removes the empty graph.
+
 ### Plot reference-electrode voltage versus time
 
 Load files through either panel using the same electrical loader. The optional `Vref` column (also recognized as `ReferenceVoltage` or `ReferenceElectrodeVoltage`, case-insensitively) is copied to `<base>_Vref` in `root:AT_Elec:Data`. Supply voltage values in **V**; no automatic mV conversion is performed. Native columns remain unchanged. Files without Vref still load normally when they contain the required DrainI column. Reload previously imported files to create the new working Vref waves.
@@ -47,11 +53,11 @@ Use **OECT** for **Plot Id vs Vg (transfer)** and **Plot steady-state Id vs Vg**
 
 1. Plot **Id vs time** using the toolbox, and bring that graph to the front.
 2. In **Electrical**, click **Add Vg vs time to graph** or **Add Vref vs time to graph**. The same commands appear under **Macros → Academic Toolbox - Time overlays**.
-3. Select the sample from the list of Id traces already plotted in that graph. The corresponding `GateV` or `Vref` wave is added against that sample's Time wave.
+3. Select one or more samples from the list of Id traces already plotted in that graph. Each selected sample's `GateV` or `Vref` wave is added against its corresponding Time wave. You can repeat the command to add other plotted samples later.
 
-The voltage overlay is grey and uses an inverted **right** voltage axis; Id stays on the left in µA. The right-axis title is **Vg (V)**, **Vref (V)**, or **Vg, Vref (V)** when both overlays are present. Both can coexist: Vg is solid and Vref is dashed, with a separate voltage legend. Adding an overlay again replaces the previous overlay of the same kind, so there is at most one Vg and one Vref overlay per graph.
+Each voltage overlay is grey and uses an inverted **right** voltage axis; Id stays on the left in µA. The right-axis title is **Vg (V)**, **Vref (V)**, or **Vg, Vref (V)** when both quantities are present. Multiple samples and both voltage quantities can coexist: Vg is solid and Vref is dashed, with a separate voltage legend identifying the sample and quantity. Adding the same sample and voltage quantity again updates only that overlay, leaving the other samples and voltage overlays in place.
 
-The overlay copies the selected Id trace's displayed time offset and multiplier, including a shift of its first time to zero, so the two traces remain aligned. Source Time, current and voltage waves are unchanged. **Recolour top graph** preserves the grey voltage overlays. Appearance controls also preserve their colors and axis labels.
+Each overlay copies its selected Id trace's displayed time offset and multiplier, including a shift of its first time to zero, so every sample's current and voltage traces remain aligned. Source Time, current and voltage waves are unchanged. **Recolour top graph** preserves all grey voltage overlays. Appearance controls also preserve their colors and axis labels.
 
 The command requires a toolbox Id/time trace in the current graph and the selected sample's corresponding voltage column. Empty, unequal-length or entirely nonfinite voltage data are rejected. Existing toolbox GateV/Vref traces on the right axis are supported, and the title includes their quantities. If unrelated data already use the right axis, choose a graph with a free or voltage-only right axis before adding the overlay.
 
@@ -107,7 +113,7 @@ The legacy conductivity tools only format plots; neither the old files nor this 
 
 | Original file | Functions and behavior | Consolidation |
 |---|---|---|
-| `OECT_Electrical.ipf` | ADCMT folder and multiple-file import; filename/sample/category parsing; dataset listing/deletion; transient, transfer and steady-state plots; curve selection; gradients; axes, legends and appearance preferences. | Retained as `AT_E_*`; fixed A/V/s input units, original-column retention, inverted Id by default with an optional conventional direction, Vref plotting, voltage overlays and no fabricated time. |
+| `OECT_Electrical.ipf` | ADCMT folder and multiple-file import; filename/sample/category parsing; dataset listing/deletion; transient, transfer and steady-state plots; curve selection; gradients; axes, legends and appearance preferences. | Retained as `AT_E_*`; fixed A/V/s input units, original-column retention, inverted Id by default with an optional conventional direction, standalone Vg/Vref plotting, multiple-sample voltage overlays and no fabricated time. |
 | `UVvis_Spectra.ipf` | JASCO/plain-text import; ascending wavelength conversion; common-grid interpolation; detector-jump and common-anchor baseline correction; raw/corrected plotting; duplicated selection, color and style helpers. | Retained as `AT_U_*`; shared helpers consolidated, native XY preserved, every grid point checked, out-of-range interpolation becomes NaN. |
 | `OECT_Panel.ipf` | Includes the two large files and provides the electrical/UV/color/appearance control panel. | Replaced by `AT_Panel` and `AT_Button` inside the single file. Gradient choice now persists for new plots. |
 | `Style Panel.ipf` | `OpenStylePanel` creates a formatting panel; `ApplyAcademicStyle` sets Arial, boxed axes, lines, colors and legend; `LabelAxes`/`LabelAxes2` label electrical and UV axes. | One shared adjustable style and label dialog. The old general style could erase the Y label and overwrite colors; appearance and color controls are now separate. |
@@ -142,10 +148,12 @@ Both data roots also hold filename, base-name, category and sample metadata. Pre
 
 `AT_LoadPath(fullPath,kind,[fmt,skipLines,encoding])` is an optional scriptable single-file entry point. `kind=1` loads electrical data; `kind=2` loads UV. For UV, `fmt=1` means JASCO and `fmt=2` means plain text. `skipLines` is the zero-based header line for electrical data and the number of skipped lines for plain UV. Electrical input is always A, V and s, regardless of saved scale preferences. Return values are 0 (not loaded), 1 (loaded), or 2 (loaded but no recognized sample token). On Mac/Igor 8 it accepts an existing POSIX path or an Igor colon-separated path, including filenames containing a literal colon.
 
-`AT_E_AddVg()` and `AT_E_AddVref()` open the sample selector for the front graph. For scripts, `AT_E_AddVoltage(kind,gName="graphName",currentTrace="traceName")` adds the overlay without that selector: `kind=1` is Vg and `kind=2` is Vref. Specify the name of an Id/time trace already in that graph. `AT_InputUnits()` remains as a backward-compatible, dialog-free function that restores legacy current/time scale variables to 1.
+`AT_E_PlotVg()` and `AT_E_PlotVref()` open the sample/appearance selector and create a new standalone voltage/time graph. `AT_E_AddVg()` and `AT_E_AddVref()` open a multiple-sample selector for the front Id/time graph. For scripts, `AT_E_AddVoltage(kind,gName="graphName",currentTrace="traceName")` adds or updates one overlay without that selector: `kind=1` is Vg and `kind=2` is Vref. Specify the name of an Id/time trace already in that graph; call it again for each additional sample. `AT_InputUnits()` remains as a backward-compatible, dialog-free function that restores legacy current/time scale variables to 1.
 
 ## Validation
 
-Source checks cover retained original functions, unique function names, balanced procedure blocks, fixed-unit loading, Vref loader/plot/button wiring, voltage overlay routes and separate panel routes. The implementation uses the existing Igor 8 plotting/style helpers. Axis inversion uses Igor's axis-reversal controls, as documented by [WaveMetrics SetAxis](https://docs.wavemetrics.com/igorpro/commands/setaxis).
+Validation covers retained original functions, unique function names, balanced procedure blocks, fixed-unit loading, voltage loader/plot/button wiring, multiple-sample overlay routes and separate panel routes. The implementation uses the existing Igor 8 plotting/style helpers. Axis inversion uses Igor's axis-reversal controls, as documented by [WaveMetrics SetAxis](https://docs.wavemetrics.com/igorpro/commands/setaxis).
 
-The earlier Vref/separate-panel revision compiled and ran in the installed Igor Pro 8 application, passed `AT_SelfTest()`, and loaded synthetic files with and without Vref. For this update, the supplied real measurement file was inspected and the path-parsing cause identified. Native compilation and runtime verification of the latest fixed-unit and overlay changes are tracked separately; see `VALIDATION.md` for the final test scope and any remaining checks.
+The earlier Vref/separate-panel revision compiled and ran in the installed Igor Pro 8 application, passed `AT_SelfTest()`, and loaded synthetic files with and without Vref. The supplied real measurement file was inspected and its path-parsing failure was identified and fixed. See `VALIDATION.md` for the final test scope of the latest multiple-sample overlays and standalone Vg plot, including native compilation/runtime results and any remaining checks.
+
+For a native regression run, compile this procedure in a fresh experiment and run `AT_SelfTest()`. Its new voltage-plot checks exercise two-sample overlays, replacement, separate time alignment, grey recoloring and standalone Vg plotting. See `VALIDATION.md` to distinguish prepared checks from executed checks.
