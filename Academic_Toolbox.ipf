@@ -133,8 +133,13 @@ Static Function AT_E_Ingest(fn, sep, nCat, nameMode, headerLine, enc)
 	cat  = AT_E_CatFrom(rest, sep, nCat, pos >= 0)
 	base = AT_E_UniqueBase(AT_E_MakeBase(stem, rest, nameMode))
 
-	if (AT_E_LoadOne(fn, base, headerLine, enc) != 0)
-		Print "  ! skipped (no DrainI column found): " + fn
+	Variable loadRC = AT_E_LoadOne(fn, base, headerLine, enc)
+	if (loadRC != 0)
+		if(loadRC==-2)
+			Print "  ! skipped (no DrainI column found; check header line): " + fn
+		else
+			Print "  ! skipped (file could not be read): " + fn
+		endif
 		return 0
 	endif
 
@@ -147,14 +152,18 @@ Static Function AT_E_Ingest(fn, sep, nCat, nameMode, headerLine, enc)
 	return (pos >= 0) ? 1 : 2
 End
 
-//  Native path separator of a full path string
+// Detect path format, preserving literal / characters in Mac HFS filenames.
+// A POSIX colon in a filename becomes / in HFS; only a leading / means POSIX.
 Static Function/S AT_E_PathSep(fullPath)
 	String fullPath
+	if (cmpstr(fullPath[0], "/") == 0)
+		return "/"
+	endif
+	if (cmpstr(IgorInfo(2),"Macintosh")==0)
+		return ":"
+	endif
 	if (strsearch(fullPath, "\\", 0) >= 0)
 		return "\\"
-	endif
-	if (strsearch(fullPath, "/", 0) >= 0)
-		return "/"
 	endif
 	return ":"
 End
@@ -259,7 +268,7 @@ Static Function AT_E_LoadOne(fn, base, headerLine, enc)
 	if (strlen(nI) == 0)
 		SetDataFolder saveDF
 		KillDataFolder/Z root:AT_Elec:tmp
-		return -1
+		return -2
 	endif
 
 	NewDataFolder/O root:AT_Elec:Native
@@ -275,16 +284,15 @@ Static Function AT_E_LoadOne(fn, base, headerLine, enc)
 	WAVE wI = $nI
 	Duplicate/O wI, root:AT_Elec:Data:$(base + "_DrainI")
 	AT_E_InitPrefs()
-	NVAR currentScale=root:Packages:AcademicToolbox:currentScale
-	NVAR timeScale=root:Packages:AcademicToolbox:timeScale
 	WAVE storedI=root:AT_Elec:Data:$(base + "_DrainI")
-	storedI *= currentScale
 	SetScale d,0,0,"A",storedI
 
 
 	if (strlen(nG) > 0)
 		WAVE wG = $nG
 		Duplicate/O wG, root:AT_Elec:Data:$(base + "_GateV")
+		WAVE storedG = root:AT_Elec:Data:$(base + "_GateV")
+		SetScale d,0,0,"V",storedG
 	endif
 
 	if (strlen(nR) > 0)
@@ -298,7 +306,6 @@ Static Function AT_E_LoadOne(fn, base, headerLine, enc)
 		WAVE wT = $nT
 		Duplicate/O wT, root:AT_Elec:Data:$(base + "_Time")
 		WAVE storedT=root:AT_Elec:Data:$(base + "_Time")
-		storedT *= timeScale
 		SetScale d,0,0,"s",storedT
 
 	endif
@@ -459,6 +466,160 @@ Function AT_E_PlotTransient()
 End
 
 // Reference-electrode voltage: source and working voltage units are volts.
+// Select a plotted toolbox Id trace, keeping its exact displayed time alignment.
+Function AT_E_AddVg()
+	return AT_E_AddVoltage(1)
+End
+
+Function AT_E_AddVref()
+	return AT_E_AddVoltage(2)
+End
+
+// Optional arguments allow repeatable script-based validation without dialogs.
+Function AT_E_AddVoltage(kind,[gName,currentTrace])
+	Variable kind
+	String gName,currentTrace
+	if(kind!=1 && kind!=2)
+		return -1
+	endif
+	if(ParamIsDefault(gName) || strlen(gName)==0)
+		gName=WinName(0,1)
+	endif
+	if(strlen(gName)==0 || WinType(gName)!=1)
+		DoAlert 0,"Select an Id vs time graph first."
+		return -1
+	endif
+	String tl=TraceNameList(gName,";",1), candidates="", tn, info
+	Variable i
+	for(i=0;i<ItemsInList(tl);i+=1)
+		tn=StringFromList(i,tl)
+		WAVE/Z iy=TraceNameToWaveRef(gName,tn), ix=XWaveRefFromTrace(gName,tn)
+		if(!WaveExists(iy) || !WaveExists(ix))
+			continue
+		endif
+		info=TraceInfo(gName,tn,0)
+		if(cmpstr(GetWavesDataFolder(iy,1),"root:AT_Elec:Data:")!=0 || !stringmatch(NameOfWave(iy),"*_DrainI"))
+			continue
+		endif
+		String ibase=NameOfWave(iy)
+		ibase=ibase[0,strlen(ibase)-8]
+		if(cmpstr(GetWavesDataFolder(ix,2),"root:AT_Elec:Data:"+ibase+"_Time")!=0)
+			continue
+		endif
+		if(cmpstr(StringByKey("YAXIS",info),"left")==0 && cmpstr(StringByKey("XAXIS",info),"bottom")==0)
+			candidates+=tn+";"
+		endif
+	endfor
+	if(ItemsInList(candidates)==0)
+		DoAlert 0,"This graph has no toolbox Id vs time trace. Plot Id vs time first."
+		return -1
+	endif
+	if(ParamIsDefault(currentTrace))
+		Variable choice=1
+		Prompt choice,"Sample (Id trace already in this graph)",popup,candidates
+		DoPrompt "Add grey voltage vs time on right axis",choice
+		if(V_flag)
+			return -1
+		endif
+		currentTrace=StringFromList(choice-1,candidates)
+	endif
+	if(WhichListItem(currentTrace,candidates)<0)
+		return -1
+	endif
+	WAVE iy=TraceNameToWaveRef(gName,currentTrace), wx=XWaveRefFromTrace(gName,currentTrace)
+	String base=NameOfWave(iy)
+	base=base[0,strlen(base)-8]
+	String suffix="_GateV", overlay="ATvgOverlay"
+	if(kind==2)
+		suffix="_Vref"
+		overlay="ATvrefOverlay"
+	endif
+	WAVE/Z wy=$("root:AT_Elec:Data:"+base+suffix)
+	if(!WaveExists(wy))
+		DoAlert 0,"The selected sample has no "+suffix[1,strlen(suffix)-1]+" column."
+		return -1
+	endif
+	if(numpnts(wy)==0 || numpnts(wy)!=numpnts(wx))
+		DoAlert 0,"Voltage and Time must be nonempty and have equal lengths."
+		return -1
+	endif
+	WaveStats/Q/M=1 wy
+	if(numtype(V_min)!=0 || numtype(V_max)!=0)
+		DoAlert 0,"The selected voltage has no finite values."
+		return -1
+	endif
+	// Do not mix this voltage overlay with unrelated pre-existing right-axis data.
+	for(i=0;i<ItemsInList(tl);i+=1)
+		tn=StringFromList(i,tl)
+		info=TraceInfo(gName,tn,0)
+		if(cmpstr(StringByKey("YAXIS",info),"right")==0)
+			WAVE/Z rightWave=TraceNameToWaveRef(gName,tn)
+			if(!WaveExists(rightWave))
+				return -1
+			endif
+			if(cmpstr(GetWavesDataFolder(rightWave,1),"root:AT_Elec:Data:")!=0 || (!stringmatch(NameOfWave(rightWave),"*_GateV") && !stringmatch(NameOfWave(rightWave),"*_Vref")))
+				DoAlert 0,"The right axis contains data other than toolbox GateV/Vref. Use a graph with a free or voltage-only right axis."
+				return -1
+			endif
+		endif
+	endfor
+	info=TraceInfo(gName,currentTrace,0)
+	Variable xoff=0,yoff=0,xmul=1,ymul=1
+	String pair=StringByKey("offset(x)",info,"=")
+	if(strlen(pair)>0)
+		sscanf pair,"{%g,%g}",xoff,yoff
+	endif
+	pair=StringByKey("muloffset(x)",info,"=")
+	if(strlen(pair)>0)
+		sscanf pair,"{%g,%g}",xmul,ymul
+	endif
+	if(xmul==0)
+		xmul=1
+	endif
+	if(WhichListItem(overlay,tl)>=0)
+		RemoveFromGraph/W=$gName $overlay
+	endif
+	AppendToGraph/W=$gName/R wy/TN=$overlay vs wx
+	AT_E_InitPrefs()
+	NVAR lw=root:Packages:AcademicToolbox:lineWidth
+	ModifyGraph/W=$gName rgb($overlay)=(32768,32768,32768), lsize($overlay)=lw
+	ModifyGraph/W=$gName offset($overlay)={xoff,0}, muloffset($overlay)={xmul,1}
+	ModifyGraph/W=$gName lstyle($overlay)=2*(kind==2)
+	AT_E_ApplyLook(gName,0)
+	SetAxis/W=$gName/A/R right
+	Label/W=$gName bottom "Time (s)"
+	Label/W=$gName left "\\f02I\\BD\\M\\f00 (µA)"
+	tl=TraceNameList(gName,";",1)
+	Variable hasG=0,hasR=0
+	for(i=0;i<ItemsInList(tl);i+=1)
+		tn=StringFromList(i,tl)
+		info=TraceInfo(gName,tn,0)
+		if(cmpstr(StringByKey("YAXIS",info),"right")==0)
+			WAVE rvoltage=TraceNameToWaveRef(gName,tn)
+			hasG=hasG || stringmatch(NameOfWave(rvoltage),"*_GateV")
+			hasR=hasR || stringmatch(NameOfWave(rvoltage),"*_Vref")
+		endif
+	endfor
+	String rightLabel="\\f02V\\BG\\M\\f00 (V)", key=""
+	if(hasR)
+		rightLabel="\\f02V\\Bref\\M\\f00 (V)"
+	endif
+	if(hasG && hasR)
+		rightLabel="\\f02V\\BG\\M\\f00, \\f02V\\Bref\\M\\f00 (V)"
+	endif
+	Label/W=$gName right rightLabel
+	if(WhichListItem("ATvgOverlay",tl)>=0)
+		WAVE vg=TraceNameToWaveRef(gName,"ATvgOverlay")
+		key="\\s(ATvgOverlay) Vg: "+NameOfWave(vg)+"\r"
+	endif
+	if(WhichListItem("ATvrefOverlay",tl)>=0)
+		WAVE vr=TraceNameToWaveRef(gName,"ATvrefOverlay")
+		key+="\\s(ATvrefOverlay) Vref: "+NameOfWave(vr)
+	endif
+	Legend/W=$gName/C/N=ATvoltageLegend/F=0/A=RB RemoveEnding(key,"\r")
+	return 0
+End
+
 Function AT_E_PlotVref()
 
 	WAVE/Z/T chk = root:AT_Elec:BaseName
@@ -1309,10 +1470,20 @@ Function AT_E_RecolorGradient(gName, which)
 		return -1
 	endif
 	String tl = TraceNameList(gName, ";", 1), tn
-	Variable i, n = ItemsInList(tl), r, g, b
-	for (i = 0; i < n; i += 1)
+	Variable i, n=0, k=0, r, g, b
+	for(i=0;i<ItemsInList(tl);i+=1)
+		tn=StringFromList(i,tl)
+		if(cmpstr(tn,"ATvgOverlay")!=0 && cmpstr(tn,"ATvrefOverlay")!=0)
+			n+=1
+		endif
+	endfor
+	for (i = 0; i < ItemsInList(tl); i += 1)
 		tn = StringFromList(i, tl)
-		AT_E_GradColor(which, i, n, r, g, b)
+		if(cmpstr(tn,"ATvgOverlay")==0 || cmpstr(tn,"ATvrefOverlay")==0)
+			continue
+		endif
+		AT_E_GradColor(which, k, n, r, g, b)
+		k+=1
 		ModifyGraph/W=$gName rgb($tn) = (r, g, b)
 	endfor
 	return n
@@ -1509,6 +1680,11 @@ Function AT_E_ApplyLook(gName, doTraces)
 			tn = StringFromList(i, tl)
 			ModifyGraph/W=$gName lsize($tn) = lwv, msize($tn) = mk
 		endfor
+	endif
+	String axes=AxisList(gName)
+	if(WhichListItem("right",axes)>=0)
+		ModifyGraph/W=$gName margin(right)=0, lblMargin(right)=4
+		ModifyGraph/W=$gName mirror(left)=0, mirror(right)=0, tickUnit(right)=1
 	endif
 	return 0
 End
@@ -2432,6 +2608,8 @@ Static Function AT_OpenPanel(oect)
 	else
 		Button bIt, win=$panelName, pos={24, 96}, size={340, 26}, proc=AT_Button, title="Plot Id vs time"
 		Button bVref, win=$panelName, pos={24, 128}, size={340, 26}, proc=AT_Button, title="Plot Vref vs time"
+		Button bAddVg, win=$panelName, pos={24, 158}, size={165, 26}, proc=AT_Button, title="Add Vg vs time to graph"
+		Button bAddVref, win=$panelName, pos={199, 158}, size={165, 26}, proc=AT_Button, title="Add Vref vs time to graph"
 	endif
 
 	// ---------------- UV-vis ----------------------------------------
@@ -2492,6 +2670,12 @@ Function AT_Button(ba) : ButtonControl
 			break
 		case "bIt":
 			AT_E_PlotTransient()
+			break
+		case "bAddVg":
+			AT_E_AddVg()
+			break
+		case "bAddVref":
+			AT_E_AddVref()
 			break
 		case "bVref":
 			AT_E_PlotVref()
@@ -2564,6 +2748,10 @@ End
 Menu "Macros"
 	"Academic Toolbox - Electrical",/Q,AT_ElectricalPanel()
 	"Academic Toolbox - OECT",/Q,AT_OECTPanel()
+	SubMenu "Academic Toolbox - Time overlays"
+		"Add Vg vs time to graph...",/Q,AT_E_AddVg()
+		"Add Vref vs time to graph...",/Q,AT_E_AddVref()
+	End
 	SubMenu "Academic Toolbox - Extra tools"
 		"Plot existing waves (Id vs time or UV-vis)...",/Q,AT_PlotExisting()
 		"Correct spectra from top graph...",/Q,AT_CorrectGraph()
@@ -2573,19 +2761,13 @@ Menu "Macros"
 	End
 End
 
+// Backward-compatible entry point; all electrical input is A, V and s.
 Function AT_InputUnits()
 	AT_E_InitPrefs()
-	Variable iUnit=1,tUnit=1
-	Prompt iUnit,"Current units in the source files",popup,"A;mA;µA;nA"
-	Prompt tUnit,"Time units in the source files",popup,"s;ms;min;h"
-	DoPrompt "Electrical input units",iUnit,tUnit
-	if(V_flag)
-		return -1
-	endif
 	NVAR isc=root:Packages:AcademicToolbox:currentScale
 	NVAR tsc=root:Packages:AcademicToolbox:timeScale
-	isc=10^(-3*(iUnit-1))
-	tsc=str2num(StringFromList(tUnit-1,"1;0.001;60;3600"))
+	isc=1
+	tsc=1
 	return 0
 End
 
@@ -2665,9 +2847,7 @@ Function AT_PlotExisting()
 	String traces=TraceNameList(gn,";",1)
 	String tn=StringFromList(ItemsInList(traces)-1,traces)
 	if(kind==1)
-		NVAR isc=root:Packages:AcademicToolbox:currentScale
-		NVAR tsc=root:Packages:AcademicToolbox:timeScale
-		ModifyGraph/W=$gn muloffset($tn)={tsc,isc*1e6}
+		ModifyGraph/W=$gn muloffset($tn)={1,1e6}
 		AT_E_Style(gn,"Time (s)","I\\BD\\M (µA)")
 		SetAxis/A/R/W=$gn left
 	else
@@ -2927,8 +3107,9 @@ Function AT_TestLoaders()
 	endif
 	String base=bnw[numpnts(bnw)-1]
 	WAVE ii=root:AT_Elec:Data:$(base+"_DrainI"),tt=root:AT_Elec:Data:$(base+"_Time")
-	if(abs(ii[0]+2e-6)>1e-12 || tt[1]!=1)
-		Abort "FAIL: source µA/ms conversion"
+	WAVE nativeI=$("root:AT_Elec:Native:"+base+":DrainI"), nativeT=$("root:AT_Elec:Native:"+base+":Time")
+	if(ii[0]!=nativeI[0] || tt[1]!=nativeT[1])
+		Abort "FAIL: fixed SI input changed source values"
 	endif
 	AT_E_Ingest("s2_NoTime.txt","_",1,1,0,AT_E_EncCode(2))
 	base=bnw[numpnts(bnw)-1]
@@ -2950,7 +3131,7 @@ Function AT_TestLoaders()
 	if(rc==0 || regridded!=2)
 		Abort "FAIL: plain text import"
 	endif
-	Print "PASS: shared folder/single-file import core; electrical µA/ms units; missing time; JASCO header/footer; descending/regridded UV; plain text UV."
+	Print "PASS: shared folder/single-file import core; fixed electrical A/V/s units; missing time; JASCO header/footer; descending/regridded UV; plain text UV."
 	return 0
 End
 
@@ -2990,8 +3171,7 @@ Static Function/S AT_SSName(base)
 End
 
 // Scriptable single-file entry point: kind=1 electrical, kind=2 UV-vis.
-// Uses current input scales (default A/s); set them via AT_InputUnits first
-// for files with other units. UV fmt=1 JASCO, fmt=2 plain two-column.
+// Electrical input units are fixed A, V, s. UV fmt=1 JASCO, fmt=2 plain two-column.
 Function AT_LoadPath(fullPath,kind,[fmt,skipLines,encoding])
 	String fullPath
 	Variable kind,fmt,skipLines,encoding
