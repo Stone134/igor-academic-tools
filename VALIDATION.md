@@ -1,6 +1,41 @@
-# Validation — 2026-10-13
+# Validation
 
-## Latest update: multiple-sample overlays and standalone Vg/time
+## Current revision — 2026-10-16
+
+Procedure: [Academic_Toolbox.ipf at de8705a](https://github.com/Stone134/igor-academic-tools/blob/de8705a90e4dce3252b0e7e9d58f8cc7491b985a/Academic_Toolbox.ipf).
+
+The revised procedure was loaded and compiled in the installed Igor Pro 8 application. Electrical/OECT and UV-vis panels were opened and inspected, and the exact-color picker was visually inspected.
+
+An isolated development module used a synthetic tab-separated file named `B999 s123 Ph2phos -0.5V test.txt`, with 20 rows and eight columns: Time, GateI, GateV, DrainI, DrainV, Vref, Temperature, and a text Status column.
+
+### Executed checks
+
+- All eight columns were imported, including the text values.
+- Sample `s123`, category `Ph2phos`, column-first names, and the decimal voltage section were preserved; repeat import produced a unique base name.
+- Numeric current and time values matched the fixture.
+- Gate-step masks handled one-point omission, ten-point overlapping intervals, end clipping, and no automatic omission at the file start.
+- Invalid omission counts (0, 11, and a noninteger) were rejected.
+- Two-point correction produced NaNs in both Id and Ig copies, preserved all unmasked values, and left raw current values unchanged.
+- Repeating correction rebuilt copies from raw data.
+- Thesis2 preserved an existing custom margin, minor-tick setting, and trace line style while applying the requested properties.
+- A dual-axis style error was found and fixed: mirrored edges are now applied only where a real opposite axis is absent. The corrected native run completed without that error.
+- The darkest red palette value was verified as Igor RGB `(26471,0,3341)`; the managed voltage overlay was excluded from recoloring.
+- Default reset removed custom appearance while retaining two traces, their axis assignments, label text, and the current/time display transformations. The transformation was confirmed in the generated graph recreation text.
+- The picker displayed the planned graph palette, red/blue anchor swatches, categorical swatches, and exact 16-bit RGB values.
+
+### Scope and limitations
+
+The current checks used synthetic data; the user's experimental dataset was not re-imported in this validation run. This was not a comprehensive runtime regression of every UV correction, file format, dialog, or color/category combination. Existing UV processing was retained, and its earlier results are historical evidence rather than a fresh run.
+
+The validation helper and fixture were development files and are not included in this repository. There is no `AT_SelfTest()` command in the current simplified procedure.
+
+The current version has one Vg and one Vref overlay per graph. Multiple-sample overlays and standalone `AT_E_PlotVg()` described below belong to an earlier revision and are not current features.
+
+## Historical notes — 2026-10-13 and earlier
+
+The following records are retained for provenance. References to old controls, helper functions, and pending tests apply to their respective revisions, not to the current README or guide.
+
+### Latest update: multiple-sample overlays and standalone Vg/time
 
 Passed source checks:
 
@@ -15,7 +50,7 @@ Native runtime validation remains pending because Igor was in use for interactiv
 
 To verify interactively, compile the update, reopen the Electrical panel, plot Id/time for at least two samples, and select both under **Add Vg vs time to graph**. Re-add one and confirm the other remains. Then use **Plot Vg vs time (new)** and confirm a new graph contains only the selected GateV traces with Time (s) and Vg (V) labels.
 
-## Previous update: fixed SI units, filename parsing and voltage overlays
+### Previous update: fixed SI units, filename parsing and voltage overlays
 
 Passed checks:
 
@@ -31,7 +66,7 @@ Native compilation and runtime testing of this latest update remain pending. Igo
 
 Suggested native checks: compile the updated procedure; import the supplied file with header line 0 and verify 14,401 points and first values Time=0.28749896 s, DrainI=-3.86e-9 A, GateV=0 V, Vref=-0.02902479 V. Plot Id/time, add each overlay for that sample, verify copied time-zero alignment and appropriate right-axis titles. Add both overlays, repeat one to confirm replacement, and recolor to confirm both remain grey. Close/reopen the Electrical panel to reveal its new buttons.
 
-## Previous Vref/separate-panel revision
+### Previous Vref/separate-panel revision
 
 The previous revision was loaded and compiled in Igor Pro 8 using hidden procedure loading. These results apply to that revision:
 
@@ -41,3 +76,4 @@ The previous revision was loaded and compiled in Igor Pro 8 using hidden procedu
 - The separate OECT panel opened with transfer and steady-state controls.
 
 The old hard-coded validation-directory helpers were preserved and updated for fixed SI input semantics; their original fixture-based runs were not repeated in this update.
+
