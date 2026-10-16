@@ -2,9 +2,11 @@
 #pragma rtGlobals=3
 #pragma IgorVersion=8.00
 
-// Academic Toolbox: self-contained consolidation, 2026-09-10.
-// Open this file and run AT_Panel(). See Academic_Toolbox_Guide.md.
-// Original six procedures are preserved. AT_ names and data folders are isolated.
+// Academic Toolbox, simplified 2026-10-16. Igor Pro 8+.
+// Macros: Electrical / OECT and UV-vis. AT_Panel() opens Electrical / OECT.
+// New plots use Thesis2; Apply Thesis2 changes ONLY the eleven specified settings.
+// Current correction omits points with NaN in COPIES; raw data and X alignment stay intact.
+// Exact palette swatches are available from Curve color in either panel.
 Constant kAT_E_NPAL=8
 StrConstant ksAT_E_PAL="0,114,178;213,94,0;0,158,115;204,121,167;230,159,0;86,180,233;140,86,75;90,90,90"
 
@@ -13,19 +15,16 @@ Function AT_E_LoadFolder()
 	String ext = ".txt"
 	Variable headerLine = 0
 	Variable encSel = 1
-	String sep = "auto"
-	Variable nCat = 3
+	String sep = "space"
+	Variable nCat = 1
 	Variable nameMode = 1
 	Variable clearFirst = 2
 
 	Prompt ext,        "Extensions (.txt;.csv; ???? = all)"
 	Prompt headerLine, "0-based line holding the column names"
 	Prompt encSel,     "Text encoding of the files", popup, "Windows-1252 (Latin 1);UTF-8;MacRoman;let Igor decide"
-	Prompt sep,        "Filename separator (auto, space, or _)"
-	Prompt nCat,       "Tokens AFTER the sample used as CATEGORY"
-	Prompt nameMode,   "Wave names", popup, "Start at the sample token (s6_...);Full file name"
 	Prompt clearFirst, "Clear data already loaded?", popup, "Yes;No"
-	DoPrompt "Load electrical raw data", ext, headerLine, encSel, sep, nCat, nameMode, clearFirst
+	DoPrompt "Load electrical raw data", ext, headerLine, encSel, clearFirst
 	if (V_flag)
 		return -1
 	endif
@@ -77,7 +76,7 @@ Function AT_E_LoadFolder()
 
 	Printf "AT_E_LoadFolder: %d file(s) loaded, %d skipped. Total in memory: %d\r", nOK, nBad, numpnts(fnw)
 	if (nNoSample > 0)
-		Printf "  ! %d file(s) had no s1...s99 token; sample set to \"unknown\".\r", nNoSample
+		Printf "  ! %d file(s) had no s# token; sample set to \"unknown\".\r", nNoSample
 	endif
 	if (nOK == 0)
 		if(ItemsInList(fileList)==0)
@@ -108,48 +107,56 @@ End
 //  Parse the name, load the columns, append the metadata row.
 //  Returns 0 = skipped, 1 = loaded, 2 = loaded but no sample token.
 Static Function AT_E_Ingest(fn, sep, nCat, nameMode, headerLine, enc)
-	String fn, sep
-	Variable nCat, nameMode, headerLine, enc
-
-	WAVE/T fnw = root:AT_Elec:FileName
-	WAVE/T bnw = root:AT_Elec:BaseName
-	WAVE/T ctw = root:AT_Elec:Category
-	WAVE/T spw = root:AT_Elec:Sample
-
-	String stem = AT_E_StripExt(fn), samp = "", rest, base, cat
-	Variable pos = AT_E_FindSample(stem, samp)
-	rest = stem
-	if (pos >= 0)
-		rest = stem[pos, strlen(stem) - 1]
-	else
-		samp = "unknown"
-	endif
-	if(cmpstr(sep,"auto")==0)
-		rest=ReplaceString("_",rest," ")
-		sep=" "
-	elseif(cmpstr(sep,"space")==0)
-		sep=" "
-	endif
-	cat  = AT_E_CatFrom(rest, sep, nCat, pos >= 0)
-	base = AT_E_UniqueBase(AT_E_MakeBase(stem, rest, nameMode))
-
-	Variable loadRC = AT_E_LoadOne(fn, base, headerLine, enc)
-	if (loadRC != 0)
-		if(loadRC==-2)
-			Print "  ! skipped (no DrainI column found; check header line): " + fn
-		else
-			Print "  ! skipped (file could not be read): " + fn
-		endif
-		return 0
-	endif
-
-	Variable n = numpnts(fnw)
-	Redimension/N=(n + 1) fnw, bnw, ctw, spw
-	fnw[n] = fn
-	bnw[n] = base
-	ctw[n] = cat
-	spw[n] = samp
-	return (pos >= 0) ? 1 : 2
+    String fn, sep
+    Variable nCat, nameMode, headerLine, enc
+    WAVE/T fnw=root:AT_Elec:FileName,bnw=root:AT_Elec:BaseName
+    WAVE/T ctw=root:AT_Elec:Category,spw=root:AT_Elec:Sample
+    String stem=fn,samp="",rest,base,cat="All"
+    // Strip only the final extension. Preserve decimals and punctuation in sections.
+    Variable dot=strsearch(fn,".",inf,1)
+    stem=fn
+    if(dot>0)
+        stem=fn[0,dot-1]
+    endif
+    Variable pos=AT_E_FindSample(stem,samp)
+    rest=stem
+    if(pos>=0)
+        rest=samp+stem[pos+strlen(samp),strlen(stem)-1]
+        String after=TrimString(stem[pos+strlen(samp),strlen(stem)-1])
+        if(strlen(after)>0)
+            cat=StringFromList(0,after," ")
+            // Read older underscore-delimited filenames as well.
+            if(cmpstr(after[0],"_")==0)
+                cat=StringFromList(0,after[1,strlen(after)-1],"_")
+            endif
+        endif
+    else
+        samp="unknown"
+        String first=StringFromList(0,stem," ")
+        if(GrepString(first,"^[Bb][0-9]+$"))
+            rest=TrimString(stem[strlen(first),strlen(stem)-1])
+        endif
+    endif
+    base=AT_E_UniqueBase(CleanupName(ReplaceString(" ",rest,"_"),1,220))
+    if(AT_E_LoadOne(fn,base,headerLine,enc)!=0)
+        Print "Skipped (check header row and file access): "+fn
+        return 0
+    endif
+    Variable n=numpnts(fnw)
+    Redimension/N=(n+1) fnw,bnw,ctw,spw
+    fnw[n]=fn; bnw[n]=base; ctw[n]=cat; spw[n]=samp
+    String df=GetDataFolder(1),nm
+    SetDataFolder root:AT_Elec:Data
+    String wl=WaveList("*",";","")
+    Variable j
+    for(j=0;j<ItemsInList(wl);j+=1)
+        nm=StringFromList(j,wl)
+        if(stringmatch(nm,"*_"+base))
+            Note $nm,"ATSample="+samp+";ATCategory="+cat+";ATBase="+base+";ATFile="+fn+";"
+        endif
+    endfor
+    SetDataFolder df
+    return (pos>=0) ? 1 : 2
 End
 
 // Detect path format, preserving literal / characters in Mac HFS filenames.
@@ -173,18 +180,15 @@ Function AT_E_LoadFiles()
 
 	Variable headerLine = 0
 	Variable encSel = 1
-	String sep = "auto"
-	Variable nCat = 3
+	String sep = "space"
+	Variable nCat = 1
 	Variable nameMode = 1
 	Variable clearFirst = 2
 
 	Prompt headerLine, "0-based line holding the column names"
 	Prompt encSel,     "Text encoding of the files", popup, "Windows-1252 (Latin 1);UTF-8;MacRoman;let Igor decide"
-	Prompt sep,        "Filename separator (auto, space, or _)"
-	Prompt nCat,       "Tokens AFTER the sample used as CATEGORY"
-	Prompt nameMode,   "Wave names", popup, "Start at the sample token (s6_...);Full file name"
 	Prompt clearFirst, "Clear data already loaded?", popup, "Yes;No"
-	DoPrompt "Load individual electrical files", headerLine, encSel, sep, nCat, nameMode, clearFirst
+	DoPrompt "Load individual electrical files", headerLine, encSel, clearFirst
 	if (V_flag)
 		return -1
 	endif
@@ -235,7 +239,7 @@ Function AT_E_LoadFiles()
 	WAVE/T fnw = root:AT_Elec:FileName
 	Printf "AT_E_LoadFiles: %d file(s) loaded, %d skipped. Total in memory: %d\r", nOK, nBad, numpnts(fnw)
 	if (nNoSample > 0)
-		Printf "  ! %d file(s) had no s1...s99 token; sample set to \"unknown\".\r", nNoSample
+		Printf "  ! %d file(s) had no s# token; sample set to \"unknown\".\r", nNoSample
 	endif
 	return nOK
 End
@@ -262,53 +266,29 @@ Static Function AT_E_LoadOne(fn, base, headerLine, enc)
 	String names = S_waveNames
 	String nI = AT_U_FindCol(names, "draini;draincurrent;id")
 	String nG = AT_U_FindCol(names, "gatev;gatevoltage;vg")
+	String nIG = AT_U_FindCol(names, "gatei;gatecurrent;ig")
+	String nDV = AT_U_FindCol(names, "drainv;drainvoltage;vd")
 	String nT = AT_E_FindCol(names, "time")
 	String nR = AT_U_FindCol(names, "vref;referencevoltage;referenceelectrodevoltage")
-
-	if (strlen(nI) == 0)
-		SetDataFolder saveDF
-		KillDataFolder/Z root:AT_Elec:tmp
-		return -2
-	endif
 
 	NewDataFolder/O root:AT_Elec:Native
 	NewDataFolder/O root:AT_Elec:Native:$base
 	Variable colIndex
+	String colName, destName
 	for(colIndex=0;colIndex<ItemsInList(names);colIndex+=1)
-		String colName=StringFromList(colIndex,names)
-		WAVE/Z column=$colName
-		if(WaveExists(column))
-			Duplicate/O column,$("root:AT_Elec:Native:"+base+":"+colName)
-		endif
+		colName=StringFromList(colIndex,names)
+		// Duplicate by name also preserves text columns loaded with /K=0.
+		Duplicate/O $colName,$("root:AT_Elec:Native:"+PossiblyQuoteName(base)+":"+PossiblyQuoteName(colName))
+		destName=CleanupName(colName+"_"+base,1,255)
+		Duplicate/O $colName,$("root:AT_Elec:Data:"+PossiblyQuoteName(destName))
 	endfor
-	WAVE wI = $nI
-	Duplicate/O wI, root:AT_Elec:Data:$(base + "_DrainI")
-	AT_E_InitPrefs()
-	WAVE storedI=root:AT_Elec:Data:$(base + "_DrainI")
-	SetScale d,0,0,"A",storedI
-
-
-	if (strlen(nG) > 0)
-		WAVE wG = $nG
-		Duplicate/O wG, root:AT_Elec:Data:$(base + "_GateV")
-		WAVE storedG = root:AT_Elec:Data:$(base + "_GateV")
-		SetScale d,0,0,"V",storedG
-	endif
-
-	if (strlen(nR) > 0)
-		WAVE wR = $nR
-		Duplicate/O wR, root:AT_Elec:Data:$(base + "_Vref")
-		WAVE storedR = root:AT_Elec:Data:$(base + "_Vref")
-		SetScale d,0,0,"V",storedR
-	endif
-
-	if (strlen(nT) > 0)
-		WAVE wT = $nT
-		Duplicate/O wT, root:AT_Elec:Data:$(base + "_Time")
-		WAVE storedT=root:AT_Elec:Data:$(base + "_Time")
-		SetScale d,0,0,"s",storedT
-
-	endif
+	// Recognized aliases get canonical names for the plotting routines.
+	AT_E_StoreCanonical(nI,base,"DrainI","A")
+	AT_E_StoreCanonical(nG,base,"GateV","V")
+	AT_E_StoreCanonical(nIG,base,"GateI","A")
+	AT_E_StoreCanonical(nDV,base,"DrainV","V")
+	AT_E_StoreCanonical(nT,base,"Time","s")
+	AT_E_StoreCanonical(nR,base,"Vref","V")
 
 	SetDataFolder saveDF
 	KillDataFolder/Z root:AT_Elec:tmp
@@ -351,28 +331,22 @@ Function AT_E_PlotTransient()
 	endif
 
 	AT_E_InitPrefs()
-	NVAR gLW = root:Packages:AcademicToolbox:lineWidth
-	NVAR gMK = root:Packages:AcademicToolbox:markerSize
-	NVAR gWW = root:Packages:AcademicToolbox:winW
-	NVAR gWH = root:Packages:AcademicToolbox:winH
 
 	String catFilter = "*"
 	Variable pickMode = 2
 	NVAR savedGradient=root:Packages:AcademicToolbox:gradient
-	Variable colorMode = savedGradient+3
-	Variable lw = gLW
+	Variable colorMode = savedGradient
 	Variable zeroT = 1
 	Variable showLeg = 1
 	Variable revY=1
 
 	Prompt catFilter,  "Category filter ( * = all )"
 	Prompt pickMode,   "Data selection", popup, "Everything matching the filter;Choose from a list..."
-	Prompt colorMode,  "Colouring", popup, "One colour per category;Shades within each category;Every curve distinct;Red gradient (dark to light);Blue gradient (dark to light)"
-	Prompt lw,         "Line thickness (pt)"
+	Prompt colorMode,  "Colouring", popup, "Red (dark to light);Blue (dark to light);Categories blue & red;Distinct category colors"
 	Prompt zeroT,      "Shift every trace so t starts at 0?", popup, "Yes;No"
 	Prompt showLeg,    "Legend", popup, "Show;Hide"
 	Prompt revY,"Reverse current axis?",popup,"Yes;No"
-	DoPrompt "Drain current vs time", catFilter, pickMode, colorMode, lw, zeroT, showLeg, revY
+	DoPrompt "Drain current vs time", catFilter, pickMode, colorMode, zeroT, showLeg, revY
 	if (V_flag)
 		return -1
 	endif
@@ -399,15 +373,15 @@ Function AT_E_PlotTransient()
 	String catList = AT_E_GroupIdx(ctw, idx, ciW, siW, nsW)
 
 	String gName = UniqueName("gIt", 6, 0)
-	Display/N=$gName/W=(40, 40, 40 + gWW, 40 + gWH) as "Drain current vs time"
+	Display/N=$gName as "Drain current vs time"
 
 	Variable nPlot=0
 	Variable i, ymin = inf, ymax = -inf, xmin = inf, xmax = -inf, t0
 	String tn, leg = "", lastCat = ""
 
 	for (i = 0; i < m; i += 1)
-		WAVE/Z wy = root:AT_Elec:Data:$(bnw[idx[i]] + "_DrainI")
-		WAVE/Z wx = root:AT_Elec:Data:$(bnw[idx[i]] + "_Time")
+		WAVE/Z wy = $AT_E_CurrentPath(bnw[idx[i]],"DrainI")
+		WAVE/Z wx = $AT_E_ColumnPath(bnw[idx[i]],"Time")
 		if (!WaveExists(wx) || !WaveExists(wy))
 			Print "Skipped missing Time/DrainI: "+bnw[idx[i]]
 			continue
@@ -424,7 +398,6 @@ Function AT_E_PlotTransient()
 			t0 = wx[0]
 		endif
 		ModifyGraph/W=$gName offset($tn) = {-t0, 0}, muloffset($tn) = {0, 1e6}
-		ModifyGraph/W=$gName lsize($tn) = lw
 
 		Variable r, g, b
 		AT_E_TraceColor(colorMode, ciW[i], siW[i], nsW[i], i, r, g, b)
@@ -438,13 +411,13 @@ Function AT_E_PlotTransient()
 		xmax = max(xmax, V_max - t0)
 
 		if (showLeg == 1)
-			if (colorMode == 1)
+			if (colorMode == 4)
 				if (cmpstr(ctw[idx[i]], lastCat) != 0 && siW[i] == 0)
-					leg += "\\s(" + tn + ") " + ctw[idx[i]] + "\r"
+					leg += "\\s(" + PossiblyQuoteName(tn) + ") " + ctw[idx[i]] + "\r"
 					lastCat = ctw[idx[i]]
 				endif
 			else
-				leg += "\\s(" + tn + ") " + bnw[idx[i]] + "\r"
+				leg += "\\s(" + PossiblyQuoteName(tn) + ") " + bnw[idx[i]] + "\r"
 			endif
 		endif
 	endfor
@@ -457,9 +430,7 @@ Function AT_E_PlotTransient()
 	AT_E_SetNiceAxis(gName, "left",   ymin, ymax, revY==1, 0)		// reversed
 	AT_E_SetNiceAxis(gName, "bottom", xmin, xmax, 0, 1)		// time: 0 -> rounded up
 	AT_E_Style(gName, "Time (s)", "\\f02I\\BD\\M\\f00 (µA)")
-	if(colorMode==4 || colorMode==5)
-		AT_E_RecolorGradient(gName,colorMode-3)
-	endif
+	AT_RecolorGraph(gName,colorMode)
 	AT_E_PutLegend(gName, leg)
 
 	return 0
@@ -473,60 +444,6 @@ End
 
 Function AT_E_AddVref()
 	return AT_E_AddVoltage(2)
-End
-
-Static Function AT_E_IsOverlay(tn)
-	String tn
-	if(cmpstr(tn,"ATvgOverlay")==0 || cmpstr(tn,"ATvrefOverlay")==0)
-		return 1
-	endif
-	if(!stringmatch(tn,"ATvgO_*") && !stringmatch(tn,"ATvrO_*"))
-		return 0
-	endif
-	Variable i,n=strlen(tn)
-	if(n<=6)
-		return 0
-	endif
-	for(i=6;i<n;i+=1)
-		if(!AT_E_IsDigit(char2num(tn[i])))
-			return 0
-		endif
-	endfor
-	return 1
-End
-
-// Keep an existing sample's name; otherwise allocate a short unused trace name.
-Static Function/S AT_E_OverlayName(gName,voltage,kind)
-	String gName
-	WAVE voltage
-	Variable kind
-	String tl=TraceNameList(gName,";",1),tn,info
-	Variable i
-	for(i=0;i<ItemsInList(tl);i+=1)
-		tn=StringFromList(i,tl)
-		if(!AT_E_IsOverlay(tn))
-			continue
-		endif
-		WAVE/Z plotted=TraceNameToWaveRef(gName,tn)
-		info=TraceInfo(gName,tn,0)
-		if(WaveExists(plotted) && cmpstr(StringByKey("YAXIS",info),"right")==0)
-			if(cmpstr(GetWavesDataFolder(plotted,2),GetWavesDataFolder(voltage,2))==0)
-				return tn
-			endif
-		endif
-	endfor
-	String prefix="ATvgO_"
-	if(kind==2)
-		prefix="ATvrO_"
-	endif
-	i=0
-	do
-		tn=prefix+num2istr(i)
-		if(WhichListItem(tn,tl)<0)
-			return tn
-		endif
-		i+=1
-	while(1)
 End
 
 // Optional arguments allow repeatable script-based validation without dialogs.
@@ -552,31 +469,11 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 			continue
 		endif
 		info=TraceInfo(gName,tn,0)
-		if(cmpstr(GetWavesDataFolder(iy,1),"root:AT_Elec:Data:")!=0 || !stringmatch(NameOfWave(iy),"*_DrainI"))
+		if((cmpstr(GetWavesDataFolder(iy,1),"root:AT_Elec:Data:")!=0 && cmpstr(GetWavesDataFolder(iy,1),"root:AT_Elec:Corr:")!=0) || strlen(AT_E_ColumnBase(NameOfWave(iy),"DrainI"))==0)
 			continue
 		endif
-		String ibase=NameOfWave(iy)
-		ibase=ibase[0,strlen(ibase)-8]
-		if(cmpstr(GetWavesDataFolder(ix,2),"root:AT_Elec:Data:"+ibase+"_Time")!=0)
-			continue
-		endif
-		String requiredSuffix="_GateV"
-		if(kind==2)
-			requiredSuffix="_Vref"
-		endif
-		WAVE/Z candidateVoltage=$("root:AT_Elec:Data:"+ibase+requiredSuffix)
-		if(!WaveExists(candidateVoltage))
-			continue
-		endif
-		if(numpnts(ix)==0 || numpnts(ix)!=numpnts(candidateVoltage))
-			continue
-		endif
-		WaveStats/Q/M=1 candidateVoltage
-		if(numtype(V_min)!=0 || numtype(V_max)!=0)
-			continue
-		endif
-		WaveStats/Q/M=1 ix
-		if(numtype(V_min)!=0 || numtype(V_max)!=0)
+		String ibase=AT_E_ColumnBase(NameOfWave(iy),"DrainI")
+		if(cmpstr(GetWavesDataFolder(ix,2),AT_E_ColumnPath(ibase,"Time"))!=0)
 			continue
 		endif
 		if(cmpstr(StringByKey("YAXIS",info),"left")==0 && cmpstr(StringByKey("XAXIS",info),"bottom")==0)
@@ -584,47 +481,29 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 		endif
 	endfor
 	if(ItemsInList(candidates)==0)
-		DoAlert 0,"No plotted toolbox Id/time sample has a valid Time/voltage pair for this option."
+		DoAlert 0,"This graph has no toolbox Id vs time trace. Plot Id vs time first."
 		return -1
 	endif
 	if(ParamIsDefault(currentTrace))
-		Variable nc=ItemsInList(candidates),selected=0,added=0
-		Make/FREE/T/N=(nc) labels
-		Make/FREE/N=(nc) pick=1
-		for(i=0;i<nc;i+=1)
-			labels[i]=StringFromList(i,candidates)
-		endfor
-		String pickerTitle="Choose samples for grey Vg overlays"
-		if(kind==2)
-			pickerTitle="Choose samples for grey Vref overlays"
-		endif
-		if(AT_E_PickList(pickerTitle,labels,pick)!=0)
+		Variable choice=1
+		Prompt choice,"Sample (Id trace already in this graph)",popup,candidates
+		DoPrompt "Add grey voltage vs time on right axis",choice
+		if(V_flag)
 			return -1
 		endif
-		for(i=0;i<nc;i+=1)
-			if(pick[i]!=0)
-				selected+=1
-				if(AT_E_AddVoltage(kind,gName=gName,currentTrace=StringFromList(i,candidates))==0)
-					added+=1
-				endif
-			endif
-		endfor
-		if(selected==0)
-			DoAlert 0,"Nothing was selected."
-		endif
-		return (added>0) ? 0 : -1
+		currentTrace=StringFromList(choice-1,candidates)
 	endif
 	if(WhichListItem(currentTrace,candidates)<0)
 		return -1
 	endif
 	WAVE iy=TraceNameToWaveRef(gName,currentTrace), wx=XWaveRefFromTrace(gName,currentTrace)
-	String base=NameOfWave(iy)
-	base=base[0,strlen(base)-8]
-	String suffix="_GateV"
+	String base=AT_E_ColumnBase(NameOfWave(iy),"DrainI")
+	String suffix="_GateV", overlay="ATvgOverlay"
 	if(kind==2)
 		suffix="_Vref"
+		overlay="ATvrefOverlay"
 	endif
-	WAVE/Z wy=$("root:AT_Elec:Data:"+base+suffix)
+	WAVE/Z wy=$AT_E_ColumnPath(base,suffix[1,strlen(suffix)-1])
 	if(!WaveExists(wy))
 		DoAlert 0,"The selected sample has no "+suffix[1,strlen(suffix)-1]+" column."
 		return -1
@@ -647,7 +526,7 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 			if(!WaveExists(rightWave))
 				return -1
 			endif
-			if(cmpstr(GetWavesDataFolder(rightWave,1),"root:AT_Elec:Data:")!=0 || (!stringmatch(NameOfWave(rightWave),"*_GateV") && !stringmatch(NameOfWave(rightWave),"*_Vref")))
+			if(cmpstr(GetWavesDataFolder(rightWave,1),"root:AT_Elec:Data:")!=0 || (!(strlen(AT_E_ColumnBase(NameOfWave(rightWave),"GateV"))>0) && !(strlen(AT_E_ColumnBase(NameOfWave(rightWave),"Vref"))>0)))
 				DoAlert 0,"The right axis contains data other than toolbox GateV/Vref. Use a graph with a free or voltage-only right axis."
 				return -1
 			endif
@@ -666,14 +545,12 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 	if(xmul==0)
 		xmul=1
 	endif
-	String overlay=AT_E_OverlayName(gName,wy,kind)
 	if(WhichListItem(overlay,tl)>=0)
 		RemoveFromGraph/W=$gName $overlay
 	endif
 	AppendToGraph/W=$gName/R wy/TN=$overlay vs wx
 	AT_E_InitPrefs()
-	NVAR lw=root:Packages:AcademicToolbox:lineWidth
-	ModifyGraph/W=$gName rgb($overlay)=(32768,32768,32768), lsize($overlay)=lw
+	ModifyGraph/W=$gName rgb($overlay)=(32768,32768,32768)
 	ModifyGraph/W=$gName offset($overlay)={xoff,0}, muloffset($overlay)={xmul,1}
 	ModifyGraph/W=$gName lstyle($overlay)=2*(kind==2)
 	AT_E_ApplyLook(gName,0)
@@ -687,8 +564,8 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 		info=TraceInfo(gName,tn,0)
 		if(cmpstr(StringByKey("YAXIS",info),"right")==0)
 			WAVE rvoltage=TraceNameToWaveRef(gName,tn)
-			hasG=hasG || stringmatch(NameOfWave(rvoltage),"*_GateV")
-			hasR=hasR || stringmatch(NameOfWave(rvoltage),"*_Vref")
+			hasG=hasG || (strlen(AT_E_ColumnBase(NameOfWave(rvoltage),"GateV"))>0)
+			hasR=hasR || (strlen(AT_E_ColumnBase(NameOfWave(rvoltage),"Vref"))>0)
 		endif
 	endfor
 	String rightLabel="\\f02V\\BG\\M\\f00 (V)", key=""
@@ -699,54 +576,19 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 		rightLabel="\\f02V\\BG\\M\\f00, \\f02V\\Bref\\M\\f00 (V)"
 	endif
 	Label/W=$gName right rightLabel
-	for(i=0;i<ItemsInList(tl);i+=1)
-		tn=StringFromList(i,tl)
-		if(!AT_E_IsOverlay(tn))
-			continue
-		endif
-		info=TraceInfo(gName,tn,0)
-		if(cmpstr(StringByKey("YAXIS",info),"right")!=0)
-			continue
-		endif
-		WAVE voltage=TraceNameToWaveRef(gName,tn)
-		String vname=NameOfWave(voltage),vkind="Vg"
-		if(stringmatch(vname,"*_Vref"))
-			vkind="Vref"
-			vname=vname[0,strlen(vname)-6]
-		else
-			vname=vname[0,strlen(vname)-7]
-		endif
-		key+="\\s("+tn+") "+vkind+": "+vname+"\r"
-	endfor
+	if(WhichListItem("ATvgOverlay",tl)>=0)
+		WAVE vg=TraceNameToWaveRef(gName,"ATvgOverlay")
+		key="\\s(ATvgOverlay) Vg: "+NameOfWave(vg)+"\r"
+	endif
+	if(WhichListItem("ATvrefOverlay",tl)>=0)
+		WAVE vr=TraceNameToWaveRef(gName,"ATvrefOverlay")
+		key+="\\s(ATvrefOverlay) Vref: "+NameOfWave(vr)
+	endif
 	Legend/W=$gName/C/N=ATvoltageLegend/F=0/A=RB RemoveEnding(key,"\r")
 	return 0
 End
 
 Function AT_E_PlotVref()
-	return AT_E_PlotVoltageTime(2)
-End
-
-Function AT_E_PlotVg()
-	return AT_E_PlotVoltageTime(1)
-End
-
-// Without bases, show the usual selection/style dialogs. Optional bases is a
-// semicolon-separated list of loaded base names for scriptable validation.
-Function AT_E_PlotVoltageTime(kind,[bases,zeroT,revY,colorMode,showLeg])
-	Variable kind,zeroT,revY,colorMode,showLeg
-	String bases
-	if(kind!=1 && kind!=2)
-		return -1
-	endif
-	String suffix="_GateV",stem="gVg",titleStr="Gate voltage vs time"
-	String yLabel="\\f02V\\BG\\M\\f00 (V)",reversePrompt="Reverse Vg axis?"
-	if(kind==2)
-		suffix="_Vref"
-		stem="gVref"
-		titleStr="Reference-electrode voltage vs time"
-		yLabel="\\f02V\\Bref\\M\\f00 (V)"
-		reversePrompt="Reverse Vref axis?"
-	endif
 
 	WAVE/Z/T chk = root:AT_Elec:BaseName
 	if (!WaveExists(chk))
@@ -755,40 +597,24 @@ Function AT_E_PlotVoltageTime(kind,[bases,zeroT,revY,colorMode,showLeg])
 	endif
 
 	AT_E_InitPrefs()
-	NVAR gLW = root:Packages:AcademicToolbox:lineWidth
-	NVAR gMK = root:Packages:AcademicToolbox:markerSize
-	NVAR gWW = root:Packages:AcademicToolbox:winW
-	NVAR gWH = root:Packages:AcademicToolbox:winH
 
 	String catFilter = "*"
 	Variable pickMode = 2
 	NVAR savedGradient=root:Packages:AcademicToolbox:gradient
-	if(ParamIsDefault(colorMode))
-		colorMode=savedGradient+3
-	endif
-	Variable lw = gLW
-	if(ParamIsDefault(zeroT))
-		zeroT=1
-	endif
-	if(ParamIsDefault(showLeg))
-		showLeg=1
-	endif
-	if(ParamIsDefault(revY))
-		revY=1
-	endif
+	Variable colorMode = savedGradient
+	Variable zeroT = 1
+	Variable showLeg = 1
+	Variable revY=1
 
 	Prompt catFilter,  "Category filter ( * = all )"
 	Prompt pickMode,   "Data selection", popup, "Everything matching the filter;Choose from a list..."
-	Prompt colorMode,  "Colouring", popup, "One colour per category;Shades within each category;Every curve distinct;Red gradient (dark to light);Blue gradient (dark to light)"
-	Prompt lw,         "Line thickness (pt)"
+	Prompt colorMode,  "Colouring", popup, "Red (dark to light);Blue (dark to light);Categories blue & red;Distinct category colors"
 	Prompt zeroT,      "Shift every trace so t starts at 0?", popup, "Yes;No"
 	Prompt showLeg,    "Legend", popup, "Show;Hide"
-	Prompt revY,reversePrompt,popup,"Yes;No"
-	if(ParamIsDefault(bases))
-		DoPrompt titleStr, catFilter, pickMode, colorMode, lw, zeroT, showLeg, revY
-		if (V_flag)
-			return -1
-		endif
+	Prompt revY,"Reverse Vref axis?",popup,"Yes;No"
+	DoPrompt "Reference-electrode voltage vs time", catFilter, pickMode, colorMode, zeroT, showLeg, revY
+	if (V_flag)
+		return -1
 	endif
 
 	WAVE/T bnw = root:AT_Elec:BaseName
@@ -802,20 +628,7 @@ Function AT_E_PlotVoltageTime(kind,[bases,zeroT,revY,colorMode,showLeg])
 	endif
 	Variable m = numpnts(idx)
 
-	if(!ParamIsDefault(bases))
-		Variable chosen=0,j
-		for(j=0;j<m;j+=1)
-			if(WhichListItem(bnw[idx[j]],bases)>=0)
-				idx[chosen]=idx[j]
-				chosen+=1
-			endif
-		endfor
-		Redimension/N=(chosen) idx
-		m=chosen
-		if(m==0)
-			return -1
-		endif
-	elseif (pickMode == 2)
+	if (pickMode == 2)
 		m = AT_E_PickFrom(idx, bnw, ctw, spw)
 		if (m <= 0)
 			return -1
@@ -825,18 +638,18 @@ Function AT_E_PlotVoltageTime(kind,[bases,zeroT,revY,colorMode,showLeg])
 	Make/FREE/N=(m) ciW, siW, nsW
 	String catList = AT_E_GroupIdx(ctw, idx, ciW, siW, nsW)
 
-	String gName = UniqueName(stem, 6, 0)
-	Display/N=$gName/W=(40, 40, 40 + gWW, 40 + gWH) as titleStr
+	String gName = UniqueName("gVref", 6, 0)
+	Display/N=$gName as "Reference-electrode voltage vs time"
 
 	Variable nPlot=0
 	Variable i, ymin = inf, ymax = -inf, xmin = inf, xmax = -inf, t0
 	String tn, leg = "", lastCat = ""
 
 	for (i = 0; i < m; i += 1)
-		WAVE/Z wy = root:AT_Elec:Data:$(bnw[idx[i]] + suffix)
-		WAVE/Z wx = root:AT_Elec:Data:$(bnw[idx[i]] + "_Time")
+		WAVE/Z wy = $AT_E_ColumnPath(bnw[idx[i]],"Vref")
+		WAVE/Z wx = $AT_E_ColumnPath(bnw[idx[i]],"Time")
 		if (!WaveExists(wx) || !WaveExists(wy))
-			Print "Skipped missing Time/"+suffix[1,strlen(suffix)-1]+": "+bnw[idx[i]]
+			Print "Skipped missing Time/Vref: "+bnw[idx[i]]
 			continue
 		endif
 		if (numpnts(wx)==0 || numpnts(wx)!=numpnts(wy))
@@ -859,7 +672,6 @@ Function AT_E_PlotVoltageTime(kind,[bases,zeroT,revY,colorMode,showLeg])
 			t0 = wx[0]
 		endif
 		ModifyGraph/W=$gName offset($tn) = {-t0, 0}, muloffset($tn) = {0, 1}
-		ModifyGraph/W=$gName lsize($tn) = lw
 
 		Variable r, g, b
 		AT_E_TraceColor(colorMode, ciW[i], siW[i], nsW[i], i, r, g, b)
@@ -873,28 +685,26 @@ Function AT_E_PlotVoltageTime(kind,[bases,zeroT,revY,colorMode,showLeg])
 		xmax = max(xmax, V_max - t0)
 
 		if (showLeg == 1)
-			if (colorMode == 1)
+			if (colorMode == 4)
 				if (cmpstr(ctw[idx[i]], lastCat) != 0 && siW[i] == 0)
-					leg += "\\s(" + tn + ") " + ctw[idx[i]] + "\r"
+					leg += "\\s(" + PossiblyQuoteName(tn) + ") " + ctw[idx[i]] + "\r"
 					lastCat = ctw[idx[i]]
 				endif
 			else
-				leg += "\\s(" + tn + ") " + bnw[idx[i]] + "\r"
+				leg += "\\s(" + PossiblyQuoteName(tn) + ") " + bnw[idx[i]] + "\r"
 			endif
 		endif
 	endfor
 
 	if(nPlot==0)
 		KillWindow $gName
-		DoAlert 0,"No valid Time/voltage pairs. A real Time column is required."
+		DoAlert 0,"No valid Time/Vref pairs. A real Time column is required."
 		return -1
 	endif
 	AT_E_SetNiceAxis(gName, "left",   ymin, ymax, revY==1, 0)		// reversed
 	AT_E_SetNiceAxis(gName, "bottom", xmin, xmax, 0, 1)		// time: 0 -> rounded up
-	AT_E_Style(gName, "Time (s)", yLabel)
-	if(colorMode==4 || colorMode==5)
-		AT_E_RecolorGradient(gName,colorMode-3)
-	endif
+	AT_E_Style(gName, "Time (s)", "\\f02V\\Bref\\M\\f00 (V)")
+	AT_RecolorGraph(gName,colorMode)
 	AT_E_PutLegend(gName, leg)
 
 	return 0
@@ -913,24 +723,18 @@ Function AT_E_PlotTransfer()
 	endif
 
 	AT_E_InitPrefs()
-	NVAR gLW = root:Packages:AcademicToolbox:lineWidth
-	NVAR gMK = root:Packages:AcademicToolbox:markerSize
-	NVAR gWW = root:Packages:AcademicToolbox:winW
-	NVAR gWH = root:Packages:AcademicToolbox:winH
 
 	String catFilter = "*"
 	Variable pickMode = 2
 	NVAR savedGradient=root:Packages:AcademicToolbox:gradient
-	Variable colorMode = savedGradient+3
-	Variable lw = gLW
+	Variable colorMode = savedGradient
 	Variable showLeg = 1
 
 	Prompt catFilter, "Category filter ( * = all )"
 	Prompt pickMode,   "Data selection", popup, "Everything matching the filter;Choose from a list..."
-	Prompt colorMode, "Colouring", popup, "One colour per category;Shades within each category;Every curve distinct;Red gradient (dark to light);Blue gradient (dark to light)"
-	Prompt lw,        "Line thickness (pt)"
+	Prompt colorMode, "Colouring", popup, "Red (dark to light);Blue (dark to light);Categories blue & red;Distinct category colors"
 	Prompt showLeg,   "Legend", popup, "Show;Hide"
-	DoPrompt "Drain current vs gate voltage", catFilter, pickMode, colorMode, lw, showLeg
+	DoPrompt "Drain current vs gate voltage", catFilter, pickMode, colorMode, showLeg
 	if (V_flag)
 		return -1
 	endif
@@ -957,14 +761,14 @@ Function AT_E_PlotTransfer()
 	String catList = AT_E_GroupIdx(ctw, idx, ciW, siW, nsW)
 
 	String gName = UniqueName("gIV", 6, 0)
-	Display/N=$gName/W=(60, 60, 60 + gWW, 60 + gWH) as "Transfer curves"
+	Display/N=$gName as "Transfer curves"
 
 	Variable i, nPlot = 0, ymin = inf, ymax = -inf, xmin = inf, xmax = -inf
 	String tn, leg = "", lastCat = ""
 
 	for (i = 0; i < m; i += 1)
-		WAVE/Z wy = root:AT_Elec:Data:$(bnw[idx[i]] + "_DrainI")
-		WAVE/Z wx = root:AT_Elec:Data:$(bnw[idx[i]] + "_GateV")
+		WAVE/Z wy = $AT_E_CurrentPath(bnw[idx[i]],"DrainI")
+		WAVE/Z wx = $AT_E_ColumnPath(bnw[idx[i]],"GateV")
 		if (!WaveExists(wx) || !WaveExists(wy))
 			continue									// no gate column in this file
 		endif
@@ -972,7 +776,7 @@ Function AT_E_PlotTransfer()
 		tn = NameOfWave(wy)
 		nPlot += 1
 
-		ModifyGraph/W=$gName muloffset($tn) = {0, 1e6}, lsize($tn) = lw
+		ModifyGraph/W=$gName muloffset($tn) = {0, 1e6}
 
 		Variable r, g, b
 		AT_E_TraceColor(colorMode, ciW[i], siW[i], nsW[i], i, r, g, b)
@@ -986,13 +790,13 @@ Function AT_E_PlotTransfer()
 		xmax = max(xmax, V_max)
 
 		if (showLeg == 1)
-			if (colorMode == 1)
+			if (colorMode == 4)
 				if (cmpstr(ctw[idx[i]], lastCat) != 0 && siW[i] == 0)
-					leg += "\\s(" + tn + ") " + ctw[idx[i]] + "\r"
+					leg += "\\s(" + PossiblyQuoteName(tn) + ") " + ctw[idx[i]] + "\r"
 					lastCat = ctw[idx[i]]
 				endif
 			else
-				leg += "\\s(" + tn + ") " + bnw[idx[i]] + "\r"
+				leg += "\\s(" + PossiblyQuoteName(tn) + ") " + bnw[idx[i]] + "\r"
 			endif
 		endif
 	endfor
@@ -1006,9 +810,7 @@ Function AT_E_PlotTransfer()
 	AT_E_SetNiceAxis(gName, "left",   ymin, ymax, 1, 0)		// reversed
 	AT_E_SetNiceAxis(gName, "bottom", xmin, xmax, 1, 0)		// reversed
 	AT_E_Style(gName, "\\f02V\\BG\\M\\f00 (V)", "\\f02I\\BD\\M\\f00 (µA)")
-	if(colorMode==4 || colorMode==5)
-		AT_E_RecolorGradient(gName,colorMode-3)
-	endif
+	AT_RecolorGraph(gName,colorMode)
 	AT_E_PutLegend(gName, leg)
 
 	return 0
@@ -1029,30 +831,24 @@ Function AT_E_PlotSteadyState()
 	endif
 
 	AT_E_InitPrefs()
-	NVAR gLW = root:Packages:AcademicToolbox:lineWidth
-	NVAR gMK = root:Packages:AcademicToolbox:markerSize
-	NVAR gWW = root:Packages:AcademicToolbox:winW
-	NVAR gWH = root:Packages:AcademicToolbox:winH
 
 	String catFilter = "*"
 	Variable pickMode = 2
 	Variable ssMode = 1
 	Variable avgPts = 10
 	NVAR savedGradient=root:Packages:AcademicToolbox:gradient
-	Variable colorMode = savedGradient+3
+	Variable colorMode = savedGradient
 	Variable revX = 1
 	Variable revY = 1
-	Variable lw = gLW
 
 	Prompt catFilter, "Category filter ( * = all )"
 	Prompt pickMode,   "Data selection", popup, "Everything matching the filter;Choose from a list..."
 	Prompt ssMode,    "Steady-state point taken", popup, "at the end of each file;at the end of every Vg plateau"
 	Prompt avgPts,    "Average the last n points of each hold"
-	Prompt colorMode, "Colouring", popup, "One colour per category;Shades within each category;Every curve distinct;Red gradient (dark to light);Blue gradient (dark to light)"
+	Prompt colorMode, "Colouring", popup, "Red (dark to light);Blue (dark to light);Categories blue & red;Distinct category colors"
 	Prompt revX,      "Reverse the Vg axis?", popup, "Yes;No"
 	Prompt revY,      "Reverse the Id axis?", popup, "Yes;No"
-	Prompt lw,        "Line thickness (pt)"
-	DoPrompt "Steady-state current vs gate voltage", catFilter, pickMode, ssMode, avgPts, colorMode, revX, revY, lw
+	DoPrompt "Steady-state current vs gate voltage", catFilter, pickMode, ssMode, avgPts, colorMode, revX, revY
 	if (V_flag)
 		return -1
 	endif
@@ -1127,13 +923,14 @@ Function AT_E_PlotSteadyState()
 			if (cmpstr(ctw[i] + "|" + spw[i], key) != 0)
 				continue
 			endif
-			WAVE/Z wI = root:AT_Elec:Data:$(bnw[i] + "_DrainI")
-			WAVE/Z wG = root:AT_Elec:Data:$(bnw[i] + "_GateV")
+			WAVE/Z wI = $AT_E_CurrentPath(bnw[i],"DrainI")
+			WAVE/Z wG = $AT_E_ColumnPath(bnw[i],"GateV")
 			if (!WaveExists(wI) || !WaveExists(wG))
 				continue
 			endif
 			AT_E_HarvestPoints(wI, wG, avgPts, ssMode, vg, id)
 		endfor
+		Note id,"ATCategory="+cat+";ATSample="+samp+";"
 		Sort vg, vg, id
 	endfor
 
@@ -1161,7 +958,7 @@ Function AT_E_PlotSteadyState()
 
 	// ---- plot ------------------------------------------------------
 	String gName = UniqueName("gSS", 6, 0)
-	Display/N=$gName/W=(80, 80, 80 + gWW, 80 + gWH) as "Steady-state current vs gate voltage"
+	Display/N=$gName as "Steady-state current vs gate voltage"
 
 	Variable ymin = inf, ymax = -inf, xmin = inf, xmax = -inf, nPlot = 0
 	String tn, leg = "", lastCat = ""
@@ -1177,8 +974,7 @@ Function AT_E_PlotSteadyState()
 		tn = NameOfWave(id)
 		nPlot += 1
 
-		ModifyGraph/W=$gName muloffset($tn) = {0, 1e6}, lsize($tn) = lw
-		ModifyGraph/W=$gName mode($tn) = 4, marker($tn) = 19, msize($tn) = gMK, mrkThick($tn) = 1
+		ModifyGraph/W=$gName muloffset($tn) = {0, 1e6}
 
 		Variable r, g, b
 		AT_E_TraceColor(colorMode, ciW[j], siW[j], nsW[j], j, r, g, b)
@@ -1191,13 +987,13 @@ Function AT_E_PlotSteadyState()
 		xmin = min(xmin, V_min)
 		xmax = max(xmax, V_max)
 
-		if (colorMode == 1)
+		if (colorMode == 4)
 			if (cmpstr(catW[j], lastCat) != 0)
-				leg += "\\s(" + tn + ") " + catW[j] + "\r"
+				leg += "\\s(" + PossiblyQuoteName(tn) + ") " + catW[j] + "\r"
 				lastCat = catW[j]
 			endif
 		else
-			leg += "\\s(" + tn + ") " + sampW[j] + "\r"
+			leg += "\\s(" + PossiblyQuoteName(tn) + ") " + sampW[j] + "\r"
 		endif
 	endfor
 
@@ -1210,9 +1006,7 @@ Function AT_E_PlotSteadyState()
 	AT_E_SetNiceAxis(gName, "left",   ymin, ymax, revY == 1, 0)
 	AT_E_SetNiceAxis(gName, "bottom", xmin, xmax, revX == 1, 0)
 	AT_E_Style(gName, "\\f02V\\BG\\M\\f00 (V)", "Steady-state \\f02I\\BD\\M\\f00 (µA)")
-	if(colorMode==4 || colorMode==5)
-		AT_E_RecolorGradient(gName,colorMode-3)
-	endif
+	AT_RecolorGraph(gName,colorMode)
 	AT_E_PutLegend(gName, leg)
 
 	Printf "AT_E_PlotSteadyState: %d curve(s) built in root:AT_Elec:SS\r", nPlot
@@ -1285,7 +1079,7 @@ Static Function/S AT_E_StripExt(fn)
 	return ReplaceString(".", s, "")		// 0.1V -> 01V: the dot is not a separator
 End
 
-//  Find "s" followed by 1 or 2 digits ANYWHERE in the file name --
+//  Find "s" followed by one or more digits ANYWHERE in the file name --
 //  not preceded by a letter or digit, not followed by one.  This copes
 //  with s6 as its own token, with B043s6, with dashes instead of
 //  underscores, and with upper case S.  Returns the character position
@@ -1307,7 +1101,7 @@ Static Function AT_E_FindSample(stem, sampOut)
 			endif
 		endif
 		nd = 0
-		for (d = i + 1; d < n && nd < 2; d += 1)
+		for (d = i + 1; d < n; d += 1)
 			if (!AT_E_IsDigit(char2num(stem[d])))
 				break
 			endif
@@ -1319,7 +1113,7 @@ Static Function AT_E_FindSample(stem, sampOut)
 		if (i + 1 + nd < n)
 			c = char2num(stem[i + 1 + nd])
 			if (AT_E_IsAlnum(c))
-				continue								// s123... or s6x: not a sample
+				continue								// s6x: not a sample
 			endif
 		endif
 		sampOut = "s" + stem[i + 1, i + nd]
@@ -1387,7 +1181,7 @@ Static Function/S AT_E_UniqueBase(base)
 	String b = base
 	Variable k = 1
 	do
-		if (!exists("root:AT_Elec:Data:" + b + "_DrainI"))
+		if (!exists(AT_E_ColumnPath(b,"DrainI")) && !DataFolderExists("root:AT_Elec:Native:"+PossiblyQuoteName(b)))
 			return b
 		endif
 		b = base + "_" + num2istr(k)
@@ -1553,33 +1347,6 @@ End
 StrConstant ksAT_E_RED  = "103,0,13;165,15,21;203,24,29;239,59,44;251,106,74;252,146,114;252,187,161"
 StrConstant ksAT_E_BLUE = "8,48,107;8,81,156;33,113,181;66,146,198;107,174,214;158,202,225;198,219,239"
 
-//  Creates RGB waves in the experiment; graph coloring uses direct RGB.
-Function AT_E_MakeColorTables()
-	NewDataFolder/O root:Packages
-	NewDataFolder/O root:Packages:ColorTables
-	NewDataFolder/O root:Packages:ColorTables:AcademicToolbox
-	AT_E_MkCT("RedDarkToLight",  ksAT_E_RED,  0)
-	AT_E_MkCT("RedLightToDark",  ksAT_E_RED,  1)
-	AT_E_MkCT("BlueDarkToLight", ksAT_E_BLUE, 0)
-	AT_E_MkCT("BlueLightToDark", ksAT_E_BLUE, 1)
-	return 0
-End
-
-Static Function AT_E_MkCT(nm, lst, flip)
-	String nm, lst
-	Variable flip
-	Variable n = ItemsInList(lst), i, k, r, g, b
-	Make/O/W/U/N=(n, 3) root:Packages:ColorTables:AcademicToolbox:$nm
-	WAVE ct = root:Packages:ColorTables:AcademicToolbox:$nm
-	for (i = 0; i < n; i += 1)
-		k = (flip != 0) ? (n - 1 - i) : i
-		sscanf StringFromList(k, lst), "%d,%d,%d", r, g, b
-		ct[i][0] = r * 257
-		ct[i][1] = g * 257
-		ct[i][2] = b * 257
-	endfor
-	return 0
-End
 
 //  which: 1 = red, 2 = blue.  Interpolates inside the gradient so any
 //  number of curves is spread evenly from dark to light.
@@ -1602,41 +1369,12 @@ Function AT_E_GradColor(which, i, n, r, g, b)
 	Variable r1, g1, b1, r2, g2, b2
 	sscanf StringFromList(k, lst), "%d,%d,%d", r1, g1, b1
 	sscanf StringFromList(k + 1, lst), "%d,%d,%d", r2, g2, b2
-	r = (r1 + (r2 - r1) * t) * 257
-	g = (g1 + (g2 - g1) * t) * 257
-	b = (b1 + (b2 - b1) * t) * 257
+	r = round((r1 + (r2 - r1) * t) * 257)
+	g = round((g1 + (g2 - g1) * t) * 257)
+	b = round((b1 + (b2 - b1) * t) * 257)
 	return 0
 End
 
-//  Recolour every trace of a graph along a gradient, in trace order.
-Function AT_E_RecolorGradient(gName, which)
-	String gName
-	Variable which
-	if (strlen(gName) == 0)
-		gName = WinName(0, 1)
-	endif
-	if (strlen(gName) == 0)
-		return -1
-	endif
-	String tl = TraceNameList(gName, ";", 1), tn
-	Variable i, n=0, k=0, r, g, b
-	for(i=0;i<ItemsInList(tl);i+=1)
-		tn=StringFromList(i,tl)
-		if(!AT_E_IsOverlay(tn) || cmpstr(StringByKey("YAXIS",TraceInfo(gName,tn,0)),"right")!=0)
-			n+=1
-		endif
-	endfor
-	for (i = 0; i < ItemsInList(tl); i += 1)
-		tn = StringFromList(i, tl)
-		if(AT_E_IsOverlay(tn) && cmpstr(StringByKey("YAXIS",TraceInfo(gName,tn,0)),"right")==0)
-			continue
-		endif
-		AT_E_GradColor(which, k, n, r, g, b)
-		k+=1
-		ModifyGraph/W=$gName rgb($tn) = (r, g, b)
-	endfor
-	return n
-End
 
 Static Function AT_E_Palette(idx, r, g, b)
 	Variable idx
@@ -1653,22 +1391,15 @@ Static Function AT_E_Palette(idx, r, g, b)
 End
 
 Static Function AT_E_TraceColor(mode, ci, si, ns, k, r, g, b)
-	Variable mode, ci, si, ns, k
-	Variable &r, &g, &b
-	Variable f
-	if (mode == 1)
-		AT_E_Palette(ci, r, g, b)
-	elseif (mode == 2)
-		AT_E_Palette(ci, r, g, b)
-		f = (ns <= 1) ? 0 : 0.62 * si / (ns - 1)
-		r += (65535 - r) * f
-		g += (65535 - g) * f
-		b += (65535 - b) * f
-	elseif (mode == 4 || mode == 5)
-		AT_E_GradColor(mode - 3, si, ns, r, g, b)
-	else
-		AT_E_Palette(k, r, g, b)
-	endif
+    Variable mode,ci,si,ns,k
+    Variable &r,&g,&b
+    if(mode<=2)
+        AT_E_GradColor(mode,si,ns,r,g,b)
+    elseif(mode==3)
+        AT_E_GradColor(2-mod(ci,2),si,ns,r,g,b)
+    else
+        AT_E_Palette(ci,r,g,b)
+    endif
 End
 
 Static Function AT_E_NiceRange(lo, hi, loOut, hiOut, stepOut)
@@ -1702,16 +1433,6 @@ Static Function AT_E_NiceRange(lo, hi, loOut, hiOut, stepOut)
 	stepOut = step
 End
 
-Static Function AT_E_Digits(step)
-	Variable step
-	Variable d
-	for (d = 0; d < 6; d += 1)
-		if (abs(step * 10 ^ d - round(step * 10 ^ d)) < 1e-9)
-			return d
-		endif
-	endfor
-	return 3
-End
 
 //  round a positive maximum up to a friendly value: 4147 -> 4500
 Static Function AT_E_CeilNice(v)
@@ -1739,30 +1460,21 @@ Static Function AT_E_SetNiceAxis(gName, ax, lo, hi, reverse, zeroBase)
 	else
 		SetAxis/W=$gName $ax a, b
 	endif
-	ModifyGraph/W=$gName nticks($ax) = 5, minor($ax) = 0		// automatic, about 5 ticks
 End
 
 // =====================================================================
-//  APPEARANCE PREFERENCES  (shared with the control panel and with
-//  UVvis_Spectra.ipf -- both packages read root:Packages:AcademicToolbox)
+//  PANEL STATE AND THESIS2 STYLE
 // =====================================================================
 
 Function AT_E_InitPrefs()
-	NewDataFolder/O root:Packages
-	NewDataFolder/O root:Packages:AcademicToolbox
-	AT_E_DefPref("gradient",1)
-	AT_E_DefPref("currentScale",1)
-	AT_E_DefPref("timeScale",1)
-	AT_E_DefPref("fontSize",   16)
-	AT_E_DefPref("lineWidth",  2.5)
-	AT_E_DefPref("axThick",    2)
-	AT_E_DefPref("markerSize", 6)
-	AT_E_DefPref("fixedSize",  0)
-	AT_E_DefPref("widthCM",    7)
-	AT_E_DefPref("heightCM",   5)
-	AT_E_DefPref("winW",       720)
-	AT_E_DefPref("winH",       560)
-	return 0
+    NewDataFolder/O root:Packages
+    NewDataFolder/O root:Packages:AcademicToolbox
+    AT_E_DefPref("gradient",1)
+    AT_E_DefPref("uvGradient",1)
+    AT_E_DefPref("currentScale",1)
+    AT_E_DefPref("timeScale",1)
+    AT_E_DefPref("useCorrected",0)
+    return 0
 End
 
 Static Function AT_E_DefPref(nm, val)
@@ -1774,83 +1486,34 @@ Static Function AT_E_DefPref(nm, val)
 	endif
 End
 
-Function AT_E_ResetPrefs()
-	AT_E_InitPrefs()
-	String names="fontSize;lineWidth;axThick;markerSize;fixedSize;widthCM;heightCM;winW;winH"
-	String values="16;2.5;2;6;0;7;5;720;560"
-	Variable i
-	for(i=0;i<ItemsInList(names);i+=1)
-		NVAR pref=root:Packages:AcademicToolbox:$(StringFromList(i,names))
-		pref=str2num(StringFromList(i,values))
-	endfor
-	return 0
-End
 
-//  Fonts, axis thickness and the fixed/resizable size mode.
-//  doTraces != 0 also pushes the line width and marker size onto
-//  every trace, which is what the panel buttons use.
+// Apply exactly the requested Thesis2 settings.
 Function AT_E_ApplyLook(gName, doTraces)
-	String gName
-	Variable doTraces
-	if (strlen(gName) == 0)
-		gName = WinName(0, 1)
-	endif
-	if (strlen(gName) == 0)
-		return -1
-	endif
-	AT_E_InitPrefs()
-	NVAR fs  = root:Packages:AcademicToolbox:fontSize
-	NVAR ax  = root:Packages:AcademicToolbox:axThick
-	NVAR lwv = root:Packages:AcademicToolbox:lineWidth
-	NVAR mk  = root:Packages:AcademicToolbox:markerSize
-	NVAR fx  = root:Packages:AcademicToolbox:fixedSize
-	NVAR wcm = root:Packages:AcademicToolbox:widthCM
-	NVAR hcm = root:Packages:AcademicToolbox:heightCM
-
-	if (fx != 0)
-		ModifyGraph/W=$gName width = wcm * 28.3465, height = hcm * 28.3465
-	else
-		ModifyGraph/W=$gName width = 0, height = 0		// 0 = fill the window (resizable)
-	endif
-
-	ModifyGraph/W=$gName gFont = "Arial", gfSize = fs
-	ModifyGraph/W=$gName font = "Arial", fSize = fs
-	ModifyGraph/W=$gName axThick = ax, tick = 2, mirror = 1, minor = 0, standoff = 0
-	ModifyGraph/W=$gName btLen = round(3 * ax) + 2, btThick = ax
-	ModifyGraph/W=$gName stLen = round(1.5 * ax) + 1, stThick = ax
-	ModifyGraph/W=$gName lblMargin(left) = 4, lblMargin(bottom) = 4
-	ModifyGraph/W=$gName margin(left) = 0, margin(bottom) = 0		// 0 = automatic
-	ModifyGraph/W=$gName margin(right) = 16, margin(top) = 16
-
-	if (doTraces)
-		Variable i
-		String tl = TraceNameList(gName, ";", 1), tn
-		for (i = 0; i < ItemsInList(tl); i += 1)
-			tn = StringFromList(i, tl)
-			ModifyGraph/W=$gName lsize($tn) = lwv, msize($tn) = mk
-		endfor
-	endif
-	String axes=AxisList(gName)
-	if(WhichListItem("right",axes)>=0)
-		ModifyGraph/W=$gName margin(right)=0, lblMargin(right)=4
-		ModifyGraph/W=$gName mirror(left)=0, mirror(right)=0, tickUnit(right)=1
-	endif
-	return 0
-End
-
-Function AT_E_ApplyLookAll()
-	String list = WinList("*", ";", "WIN:1")
-	Variable i
-	for (i = 0; i < ItemsInList(list); i += 1)
-		AT_E_ApplyLook(StringFromList(i, list), 1)
-	endfor
-	return ItemsInList(list)
+    String gName
+    Variable doTraces // retained for existing callers
+    if(strlen(gName)==0)
+        gName=WinName(0,1)
+    endif
+    if(strlen(gName)==0 || WinType(gName)!=1)
+        return -1
+    endif
+    // Thesis2: no other axis, margin, marker, font, or trace settings are touched.
+    ModifyGraph/W=$gName axThick=0.75,btLen=3,fSize=9,lsize=0.75,expand=2,font="Arial",tick=2,standoff=0,width=170.079,height=99.2126
+    // Igor cannot mirror into an edge already occupied by a real axis.
+    // Apply mirror=1 wherever legal, retaining right/top voltage axes.
+    String axes=AxisList(gName)
+    if(WhichListItem("left",axes)>=0 && WhichListItem("right",axes)<0)
+        ModifyGraph/W=$gName mirror(left)=1
+    endif
+    if(WhichListItem("bottom",axes)>=0 && WhichListItem("top",axes)<0)
+        ModifyGraph/W=$gName mirror(bottom)=1
+    endif
+    return 0
 End
 
 Static Function AT_E_Style(gName, xlab, ylab)
 	String gName, xlab, ylab
 	AT_E_ApplyLook(gName, 0)
-	ModifyGraph/W=$gName tickUnit=1
 	Label/W=$gName bottom xlab
 	Label/W=$gName left   ylab
 End
@@ -1861,7 +1524,7 @@ Static Function AT_E_PutLegend(gName, leg)
 		return 0
 	endif
 	leg = RemoveEnding(leg, "\r")
-	Legend/W=$gName/C/N=legOE/J/F=0/A=RT/X=3/Y=3 leg
+	Legend/W=$gName/N=legOE leg
 End
 
 Function AT_U_LoadFolder()
@@ -1933,7 +1596,7 @@ Function AT_U_LoadFolder()
 
 	Printf "AT_U_LoadFolder: %d spectrum/spectra loaded, %d skipped, %d re-gridded.\r", nOK, nBad, nInterp
 	if (nNoSample > 0)
-		Printf "  ! %d file(s) had no s1...s99 token; sample set to \"unknown\".\r", nNoSample
+		Printf "  ! %d file(s) had no s# token; sample set to \"unknown\".\r", nNoSample
 	endif
 	WAVE/Z wlChk = root:AT_UV:Wavelength
 	if (WaveExists(wlChk))
@@ -2062,7 +1725,7 @@ Function AT_U_LoadFiles()
 	WAVE/T fnw = root:AT_UV:FileName
 	Printf "AT_U_LoadFiles: %d spectrum/spectra loaded, %d skipped, %d re-gridded. Total: %d\r", nOK, nBad, nInterp, numpnts(fnw)
 	if (nNoSample > 0)
-		Printf "  ! %d file(s) had no s1...s99 token; sample set to \"unknown\".\r", nNoSample
+		Printf "  ! %d file(s) had no s# token; sample set to \"unknown\".\r", nNoSample
 	endif
 	return nOK
 End
@@ -2450,17 +2113,12 @@ Function AT_U_PlotSpectra()
 	endif
 
 	AT_E_InitPrefs()
-	NVAR gLW = root:Packages:AcademicToolbox:lineWidth
-	NVAR gMK = root:Packages:AcademicToolbox:markerSize
-	NVAR gWW = root:Packages:AcademicToolbox:winW
-	NVAR gWH = root:Packages:AcademicToolbox:winH
 
 	String catFilter = "*"
 	Variable pickMode = 2
 	Variable useCorr = 1
-	NVAR savedGradient=root:Packages:AcademicToolbox:gradient
-	Variable colorMode = savedGradient+3
-	Variable lw = gLW
+	NVAR savedGradient=root:Packages:AcademicToolbox:uvGradient
+	Variable colorMode = savedGradient
 	Variable xLo = 400
 	Variable xHi = 1600
 	Variable showLeg = 1
@@ -2468,12 +2126,11 @@ Function AT_U_PlotSpectra()
 	Prompt catFilter, "Category filter ( * = all )"
 	Prompt pickMode,   "Data selection", popup, "Everything matching the filter;Choose from a list..."
 	Prompt useCorr,   "Which data?", popup, "Corrected;Raw"
-	Prompt colorMode, "Colouring", popup, "One colour per category;Shades within each category;Every curve distinct;Red gradient (dark to light);Blue gradient (dark to light)"
-	Prompt lw,        "Line thickness (pt)"
+	Prompt colorMode, "Colouring", popup, "Red (dark to light);Blue (dark to light);Categories blue & red;Distinct category colors"
 	Prompt xLo,       "Wavelength axis, from (nm)  [0 = auto]"
 	Prompt xHi,       "Wavelength axis, to (nm)    [0 = auto]"
 	Prompt showLeg,   "Legend", popup, "Show;Hide"
-	DoPrompt "Plot UV-vis spectra", catFilter, pickMode, useCorr, colorMode, lw, xLo, xHi, showLeg
+	DoPrompt "Plot UV-vis spectra", catFilter, pickMode, useCorr, colorMode, xLo, xHi, showLeg
 	if (V_flag)
 		return -1
 	endif
@@ -2525,7 +2182,7 @@ Function AT_U_PlotSpectra()
 	endif
 
 	String gName = UniqueName("gUV", 6, 0)
-	Display/N=$gName/W=(40, 40, 40 + gWW, 40 + gWH) as "UV-vis spectra"
+	Display/N=$gName as "UV-vis spectra"
 
 	Variable i, nPlot = 0, ymin = inf, ymax = -inf
 	String tn, leg = "", lastCat = ""
@@ -2539,7 +2196,6 @@ Function AT_U_PlotSpectra()
 		tn = NameOfWave(wy)
 		nPlot += 1
 
-		ModifyGraph/W=$gName lsize($tn) = lw
 
 		Variable r, g, b
 		AT_E_TraceColor(colorMode, ciW[i], siW[i], nsW[i], i, r, g, b)
@@ -2550,13 +2206,13 @@ Function AT_U_PlotSpectra()
 		ymax = max(ymax, V_max)
 
 		if (showLeg == 1)
-			if (colorMode == 1)
+			if (colorMode == 4)
 				if (cmpstr(ctw[idx[i]], lastCat) != 0 && siW[i] == 0)
-					leg += "\\s(" + tn + ") " + ctw[idx[i]] + "\r"
+					leg += "\\s(" + PossiblyQuoteName(tn) + ") " + ctw[idx[i]] + "\r"
 					lastCat = ctw[idx[i]]
 				endif
 			else
-				leg += "\\s(" + tn + ") " + bnw[idx[i]] + "\r"
+				leg += "\\s(" + PossiblyQuoteName(tn) + ") " + bnw[idx[i]] + "\r"
 			endif
 		endif
 	endfor
@@ -2571,9 +2227,7 @@ Function AT_U_PlotSpectra()
 	AT_E_SetNiceAxis(gName, "bottom", wl[pA], wl[pB], 0, 0)
 	SetAxis/W=$gName bottom wl[pA], wl[pB]				// keep exactly the requested span
 	AT_E_Style(gName, "Wavelength (nm)", "Absorbance")
-	if(colorMode==4 || colorMode==5)
-		AT_E_RecolorGradient(gName,colorMode-3)
-	endif
+	AT_RecolorGraph(gName,colorMode)
 	AT_E_PutLegend(gName, leg)
 
 	return 0
@@ -2583,7 +2237,7 @@ End
 //  NAME PARSING
 // =====================================================================
 
-//  Find "s" followed by 1 or 2 digits ANYWHERE in the file name --
+//  Find "s" followed by one or more digits ANYWHERE in the file name --
 //  not preceded by a letter or digit, not followed by one.  This copes
 //  with s6 as its own token, with B043s6, with dashes instead of
 //  underscores, and with upper case S.  Returns the character position
@@ -2710,209 +2364,183 @@ Static Function AT_U_FitAt(wl, y, pA, pB, xTarget)
 	return icept + slope * xTarget
 End
 
-// Shared control panel
-
-// Backward-compatible default entry point.
+// Two focused panels; graph controls act on the frontmost graph.
 Function AT_Panel()
-	return AT_ElectricalPanel()
+    return AT_ElectricalPanel()
 End
 
 Function AT_ElectricalPanel()
-	return AT_OpenPanel(0)
+    return AT_OpenPanel(0)
 End
 
-Function AT_OECTPanel()
-	return AT_OpenPanel(1)
+Function AT_UVPanel()
+    return AT_OpenPanel(1)
 End
 
-Static Function AT_OpenPanel(oect)
-	Variable oect
-	String panelName="ATpanel", panelTitle="Academic Toolbox - Electrical / UV-vis"
-	if(oect)
-		panelName="AToectPanel"
-		panelTitle="Academic Toolbox - OECT / UV-vis"
-	endif
-
-	AT_E_InitPrefs()
-	AT_E_MakeColorTables()
-	NVAR grad=root:Packages:AcademicToolbox:gradient
-
-	DoWindow/F $panelName
-	if (V_flag != 0)
-		return 0
-	endif
-
-	NewPanel/K=1/N=$panelName/W=(60, 50, 450, 730) as panelTitle
-	ModifyPanel fixedSize=0
-
-	// ---------------- electrical ------------------------------------
-	GroupBox gbE, win=$panelName, pos={10, 6}, size={368, 182}, title="Electrical / OECT (shared loaded data)"
-	Button bLoadE, win=$panelName, pos={24, 28}, size={165, 26}, proc=AT_Button, title="Load folder..."
-	Button bFileE, win=$panelName, pos={199, 28}, size={165, 26}, proc=AT_Button, title="Load single file(s)..."
-	Button bListE, win=$panelName, pos={24, 60}, size={245, 26}, proc=AT_Button, title="List loaded files"
-	Button bKillE, win=$panelName, pos={279, 60}, size={85, 26}, proc=AT_Button, title="Clear data..."
-	if(oect)
-		Button bIV, win=$panelName, pos={24, 96}, size={340, 26}, proc=AT_Button, title="Plot Id vs Vg (transfer)"
-		Button bSS, win=$panelName, pos={24, 128}, size={340, 26}, proc=AT_Button, title="Plot steady-state Id vs Vg"
-	else
-		Button bIt, win=$panelName, pos={24, 96}, size={340, 26}, proc=AT_Button, title="Plot Id vs time"
-		Button bVg, win=$panelName, pos={24, 128}, size={165, 26}, proc=AT_Button, title="Plot Vg vs time (new)"
-		Button bVref, win=$panelName, pos={199, 128}, size={165, 26}, proc=AT_Button, title="Plot Vref vs time"
-		Button bAddVg, win=$panelName, pos={24, 158}, size={165, 26}, proc=AT_Button, title="Add Vg vs time to graph"
-		Button bAddVref, win=$panelName, pos={199, 158}, size={165, 26}, proc=AT_Button, title="Add Vref vs time to graph"
-	endif
-
-	// ---------------- UV-vis ----------------------------------------
-	GroupBox gbU, win=$panelName, pos={10, 196}, size={368, 150}, title="UV-vis"
-	Button bLoadU, win=$panelName, pos={24, 218}, size={165, 26}, proc=AT_Button, title="Load folder..."
-	Button bFileU, win=$panelName, pos={199, 218}, size={165, 26}, proc=AT_Button, title="Load single file(s)..."
-	Button bListU, win=$panelName, pos={24, 250}, size={245, 26}, proc=AT_Button, title="List loaded spectra"
-	Button bKillU, win=$panelName, pos={279, 250}, size={85, 26}, proc=AT_Button, title="Clear data..."
-	Button bCorr,  win=$panelName, pos={24, 286}, size={340, 26}, proc=AT_Button, title="Correct (jump + reference baseline)"
-	Button bPlotU, win=$panelName, pos={24, 318}, size={340, 26}, proc=AT_Button, title="Plot spectra"
-
-	// ---------------- colours ---------------------------------------
-	GroupBox gbC, win=$panelName, pos={10, 354}, size={368, 92}, title="Colour gradients"
-	PopupMenu pmGrad, win=$panelName, pos={24, 376}, size={200, 22}, title="Gradient ", mode=grad, proc=AT_GradientPopup, value="Red (dark to light);Blue (dark to light)"
-	Button bRecolor, win=$panelName, pos={24, 406}, size={200, 26}, proc=AT_Button, title="Recolour top graph"
-	Button bMakeCT,  win=$panelName, pos={232, 406}, size={132, 26}, proc=AT_Button, title="Make RGB waves"
-
-	// ---------------- appearance ------------------------------------
-	GroupBox gbA, win=$panelName, pos={10, 454}, size={368, 214}, title="Appearance   (used by every new graph)"
-
-	SetVariable svFont, win=$panelName, pos={26, 476}, size={165, 20}, title="Font size (pt) ", limits={6, 40, 1}, value=root:Packages:AcademicToolbox:fontSize
-	SetVariable svAx,   win=$panelName, pos={205, 476}, size={160, 20}, title="Axis thickness ", limits={0.5, 8, 0.5}, value=root:Packages:AcademicToolbox:axThick
-	SetVariable svLine, win=$panelName, pos={26, 502}, size={165, 20}, title="Line width (pt)", limits={0.5, 10, 0.5}, value=root:Packages:AcademicToolbox:lineWidth
-	SetVariable svMrk,  win=$panelName, pos={205, 502}, size={160, 20}, title="Marker size    ", limits={1, 20, 1}, value=root:Packages:AcademicToolbox:markerSize
-
-	CheckBox cbFixed, win=$panelName, pos={26, 530}, title="Fixed plot size -- untick to let graphs resize with the window", variable=root:Packages:AcademicToolbox:fixedSize
-
-	SetVariable svW,  win=$panelName, pos={26, 552}, size={165, 20}, title="Plot width (cm)", limits={2, 40, 0.5}, value=root:Packages:AcademicToolbox:widthCM
-	SetVariable svH,  win=$panelName, pos={205, 552}, size={160, 20}, title="Plot height (cm)", limits={2, 40, 0.5}, value=root:Packages:AcademicToolbox:heightCM
-	SetVariable svWW, win=$panelName, pos={26, 578}, size={165, 20}, title="Window W (pt) ", limits={200, 2000, 20}, value=root:Packages:AcademicToolbox:winW
-	SetVariable svWH, win=$panelName, pos={205, 578}, size={160, 20}, title="Window H (pt)  ", limits={150, 2000, 20}, value=root:Packages:AcademicToolbox:winH
-
-	Button bApplyTop, win=$panelName, pos={26, 606}, size={165, 26}, proc=AT_Button, title="Apply to top graph"
-	Button bApplyAll, win=$panelName, pos={199, 606}, size={165, 26}, proc=AT_Button, title="Apply to ALL graphs"
-	Button bDefault,  win=$panelName, pos={26, 636}, size={165, 26}, proc=AT_Button, title="Restore defaults"
-	Button bClose,    win=$panelName, pos={199, 636}, size={165, 26}, proc=AT_Button, title="Close panel"
-
-	return 0
+Static Function AT_OpenPanel(uv)
+    Variable uv
+    AT_E_InitPrefs()
+    String pn="ATpanel", title="Academic Toolbox - Electrical / OECT"
+    Variable graphY=292
+    NVAR eg=root:Packages:AcademicToolbox:gradient,ug=root:Packages:AcademicToolbox:uvGradient
+    Variable grad=eg
+    if(uv)
+        pn="ATuvPanel"
+        title="Academic Toolbox - UV-vis"
+        graphY=190
+        grad=ug
+    endif
+    DoWindow/F $pn
+    if(V_flag)
+        return 0
+    endif
+    NewPanel/K=1/N=$pn/W=(60,50,460,50+graphY+216) as title
+    if(uv)
+        GroupBox gbData,win=$pn,pos={10,8},size={380,172},title="UV-vis"
+        Button bLoadU,win=$pn,pos={24,30},size={170,26},proc=AT_Button,title="Load folder..."
+        Button bFileU,win=$pn,pos={204,30},size={170,26},proc=AT_Button,title="Load single file(s)..."
+        Button bListU,win=$pn,pos={24,62},size={240,26},proc=AT_Button,title="List loaded spectra"
+        Button bKillU,win=$pn,pos={274,62},size={100,26},proc=AT_Button,title="Clear data..."
+        Button bCorr,win=$pn,pos={24,100},size={350,26},proc=AT_Button,title="Correct (jump + reference baseline)"
+        Button bPlotU,win=$pn,pos={24,138},size={350,26},proc=AT_Button,title="Plot spectra"
+    else
+        GroupBox gbData,win=$pn,pos={10,8},size={380,274},title="Electrical / OECT"
+        Button bLoadE,win=$pn,pos={24,30},size={170,26},proc=AT_Button,title="Load folder..."
+        Button bFileE,win=$pn,pos={204,30},size={170,26},proc=AT_Button,title="Load single file(s)..."
+        Button bListE,win=$pn,pos={24,62},size={240,26},proc=AT_Button,title="List loaded files"
+        Button bKillE,win=$pn,pos={274,62},size={100,26},proc=AT_Button,title="Clear data..."
+        Button bIt,win=$pn,pos={24,100},size={170,26},proc=AT_Button,title="Plot Id vs time"
+        Button bVref,win=$pn,pos={204,100},size={170,26},proc=AT_Button,title="Plot Vref vs time"
+        Button bIV,win=$pn,pos={24,132},size={170,26},proc=AT_Button,title="Plot Id vs Vg"
+        Button bSS,win=$pn,pos={204,132},size={170,26},proc=AT_Button,title="Steady-state Id vs Vg"
+        Button bAddVg,win=$pn,pos={24,164},size={170,26},proc=AT_Button,title="Add Vg vs time"
+        Button bAddVref,win=$pn,pos={204,164},size={170,26},proc=AT_Button,title="Add Vref vs time"
+        Button bFixI,win=$pn,pos={24,202},size={350,26},proc=AT_Button,title="Correct Id / Ig (gate steps)..."
+        CheckBox cbCorrected,win=$pn,pos={24,242},title="Use corrected currents when available",variable=root:Packages:AcademicToolbox:useCorrected
+    endif
+    GroupBox gbGraph,win=$pn,pos={10,graphY},size={380,204},title="Graph style and colors"
+    Button bApplyTop,win=$pn,pos={24,graphY+24},size={170,26},proc=AT_Button,title="Apply Thesis2"
+    Button bDefault,win=$pn,pos={204,graphY+24},size={170,26},proc=AT_Button,title="Restore to default"
+    Button bLegend,win=$pn,pos={24,graphY+56},size={170,26},proc=AT_Button,title="Add legend"
+    Button bRecolor,win=$pn,pos={204,graphY+56},size={170,26},proc=AT_Button,title="Recolor"
+    PopupMenu pmGrad,win=$pn,pos={24,graphY+94},bodyWidth=280,title="Colors",mode=grad,proc=AT_GradientPopup,value="Red (dark to light);Blue (dark to light);Categories blue & red;Distinct category colors"
+    PopupMenu pmPalette,win=$pn,pos={24,graphY+162},title="Curve color",mode=0,proc=AT_PalettePopup,value="Exact palette and curve colors..."
+    AT_DrawPalette(pn,grad,graphY+126)
+    return 0
 End
 
 Function AT_Button(ba) : ButtonControl
-	STRUCT WMButtonAction &ba
-	Variable n
-	if (ba.eventCode != 2)					// mouse up only
-		return 0
-	endif
+    STRUCT WMButtonAction &ba
+    if(ba.eventCode!=2)
+        return 0
+    endif
+    strswitch(ba.ctrlName)
+        case "bLoadE":
+            AT_E_LoadFolder()
+            break
+        case "bFileE":
+            AT_E_LoadFiles()
+            break
+        case "bListE":
+            AT_E_ListFiles()
+            break
+        case "bKillE":
+            AT_E_KillAll()
+            break
+        case "bIt":
+            AT_E_PlotTransient()
+            break
+        case "bVref":
+            AT_E_PlotVref()
+            break
+        case "bIV":
+            AT_E_PlotTransfer()
+            break
+        case "bSS":
+            AT_E_PlotSteadyState()
+            break
+        case "bAddVg":
+            AT_E_AddVg()
+            break
+        case "bAddVref":
+            AT_E_AddVref()
+            break
+        case "bFixI":
+            AT_E_CorrectCurrents()
+            break
+        case "bLoadU":
+            AT_U_LoadFolder()
+            break
+        case "bFileU":
+            AT_U_LoadFiles()
+            break
+        case "bListU":
+            AT_U_ListFiles()
+            break
+        case "bKillU":
+            AT_U_KillAll()
+            break
+        case "bCorr":
+            AT_U_Correct()
+            break
+        case "bPlotU":
+            AT_U_PlotSpectra()
+            break
+        case "bApplyTop":
+            AT_E_ApplyLook("",1)
+            break
+        case "bDefault":
+            AT_RestoreDefault("")
+            break
+        case "bLegend":
+            AT_AddLegend("")
+            break
+        case "bRecolor":
+            ControlInfo/W=$ba.win pmGrad
+            AT_RecolorGraph("",V_Value)
+            break
+    endswitch
+    return 0
+End
 
-	strswitch (ba.ctrlName)
-		// ---- electrical
-		case "bLoadE":
-			AT_E_LoadFolder()
-			break
-		case "bFileE":
-			AT_E_LoadFiles()
-			break
-		case "bListE":
-			AT_E_ListFiles()
-			break
-		case "bIt":
-			AT_E_PlotTransient()
-			break
-		case "bAddVg":
-			AT_E_AddVg()
-			break
-		case "bAddVref":
-			AT_E_AddVref()
-			break
-		case "bVg":
-			AT_E_PlotVg()
-			break
-		case "bVref":
-			AT_E_PlotVref()
-			break
-		case "bIV":
-			AT_E_PlotTransfer()
-			break
-		case "bSS":
-			AT_E_PlotSteadyState()
-			break
-		case "bKillE":
-			AT_E_KillAll()
-			break
+Function AT_GradientPopup(pa) : PopupMenuControl
+    STRUCT WMPopupAction &pa
+    if(pa.eventCode!=2)
+        return 0
+    endif
+    String key="gradient"
+    Variable y=418
+    if(cmpstr(pa.win,"ATuvPanel")==0)
+        key="uvGradient"
+        y=316
+    endif
+    NVAR grad=root:Packages:AcademicToolbox:$key
+    grad=pa.popNum
+    AT_DrawPalette(pa.win,grad,y)
+    return 0
+End
 
-		// ---- UV-vis
-		case "bLoadU":
-			AT_U_LoadFolder()
-			break
-		case "bFileU":
-			AT_U_LoadFiles()
-			break
-		case "bListU":
-			AT_U_ListFiles()
-			break
-		case "bCorr":
-			AT_U_Correct()
-			break
-		case "bPlotU":
-			AT_U_PlotSpectra()
-			break
-		case "bKillU":
-			AT_U_KillAll()
-			break
-
-		// ---- colours
-		case "bRecolor":
-			ControlInfo/W=$ba.win pmGrad
-			n = AT_E_RecolorGradient("", V_Value)			// 1 = red, 2 = blue
-			if (n < 0)
-				DoAlert 0, "There is no graph window on top."
-			else
-				Printf "Recoloured %d trace(s).\r", n
-			endif
-			break
-		case "bMakeCT":
-			AT_E_MakeColorTables()
-			Print "Colour tables written to root:Packages:ColorTables:AcademicToolbox (RedDarkToLight, RedLightToDark, BlueDarkToLight, BlueLightToDark)."
-			break
-
-		// ---- appearance
-		case "bApplyTop":
-			if (AT_E_ApplyLook("", 1) != 0)
-				DoAlert 0, "There is no graph window on top."
-			endif
-			break
-		case "bApplyAll":
-			n = AT_E_ApplyLookAll()
-			Printf "Appearance applied to %d graph(s).\r", n
-			break
-		case "bDefault":
-			AT_E_ResetPrefs()
-			break
-		case "bClose":
-			KillWindow/Z $ba.win
-			break
-	endswitch
-	return 0
+Static Function AT_DrawPalette(pn,mode,y)
+    String pn
+    Variable mode,y
+    Variable i,n=14,r,g,b
+    SetDrawLayer/W=$pn/K UserBack
+    for(i=0;i<n;i+=1)
+        if(mode<=2)
+            AT_E_GradColor(mode,i,n,r,g,b)
+        elseif(mode==3)
+            AT_E_GradColor(2-floor(i/7),mod(i,7),7,r,g,b)
+        else
+            AT_E_Palette(i,r,g,b)
+        endif
+        SetDrawEnv/W=$pn xcoord=abs,ycoord=abs,fillfgc=(r,g,b),linethick=0
+        DrawRect/W=$pn 24+i*25,y,49+i*25,y+20
+    endfor
 End
 
 Menu "Macros"
-	"Academic Toolbox - Electrical",/Q,AT_ElectricalPanel()
-	"Academic Toolbox - OECT",/Q,AT_OECTPanel()
-	SubMenu "Academic Toolbox - Time overlays"
-		"Plot Vg vs time (new graph)...",/Q,AT_E_PlotVg()
-		"Add Vg vs time to graph...",/Q,AT_E_AddVg()
-		"Add Vref vs time to graph...",/Q,AT_E_AddVref()
-	End
-	SubMenu "Academic Toolbox - Extra tools"
-		"Plot existing waves (Id vs time or UV-vis)...",/Q,AT_PlotExisting()
-		"Correct spectra from top graph...",/Q,AT_CorrectGraph()
-		"Label top graph...",/Q,AT_LabelGraph()
-		"Convert XRD 2-theta to q...",/Q,AT_ConvertQ()
-		"Stack XRD traces (display only)...",/Q,AT_StackXRD()
-	End
+    "Academic Toolbox - Electrical / OECT",/Q,AT_ElectricalPanel()
+    "Academic Toolbox - UV-vis",/Q,AT_UVPanel()
 End
 
 // Backward-compatible entry point; all electrical input is A, V and s.
@@ -2925,14 +2553,6 @@ Function AT_InputUnits()
 	return 0
 End
 
-Function AT_GradientPopup(pa) : PopupMenuControl
-	STRUCT WMPopupAction &pa
-	if(pa.eventCode==2)
-		NVAR grad=root:Packages:AcademicToolbox:gradient
-		grad=pa.popNum
-	endif
-	return 0
-End
 
 Static Function AT_SameGrid(a,b)
 	WAVE a,b
@@ -2948,448 +2568,6 @@ Static Function AT_SameGrid(a,b)
 	return 1
 End
 
-Function AT_LabelGraph()
-	String gn=WinName(0,1)
-	if(strlen(gn)==0)
-		DoAlert 0,"Select a graph first."
-		return -1
-	endif
-	Variable kind=1
-	Prompt kind,"Labels only (data and units are not converted)",popup,"Time (s) / Id (µA);Vg (V) / Id (µA);Wavelength (nm) / Absorbance;XRD q / Intensity;Time (h) / Conductivity;Time (h) / Relative conductivity"
-	DoPrompt "Axis labels",kind
-	if(V_flag)
-		return -1
-	endif
-	String xl=StringFromList(kind-1,"Time (s);V\\BG\\M (V);Wavelength (nm);q\\Bz\\M (Å\\S-1\\M);Time (h);Time (h)")
-	String yl=StringFromList(kind-1,"I\\BD\\M (µA);I\\BD\\M (µA);Absorbance;Intensity;Conductivity (S cm\\S-1\\M);Relative conductivity")
-	AT_E_Style(gn,xl,yl)
-	return 0
-End
-
-Function AT_PlotExisting()
-	String xPath="",yPath=""
-	Variable kind=1,append=2
-	Prompt kind,"Plot type",popup,"Id vs time;UV-vis absorbance"
-	Prompt xPath,"Full path of X wave (e.g. root:time)"
-	Prompt yPath,"Full path of Y wave (e.g. root:current)"
-	Prompt append,"Append to top graph?",popup,"Yes;No (new graph)"
-	DoPrompt "Plot existing waves",kind,xPath,yPath,append
-	if(V_flag)
-		return -1
-	endif
-	WAVE/Z xw=$xPath,yw=$yPath
-	if(!WaveExists(xw) || !WaveExists(yw))
-		DoAlert 0,"Both numeric waves must exist."
-		return -1
-	endif
-	if(WaveDims(xw)!=1 || WaveDims(yw)!=1 || numpnts(xw)!=numpnts(yw) || numpnts(xw)<2)
-		DoAlert 0,"Use equal-length, one-dimensional numeric waves with at least two points."
-		return -1
-	endif
-	AT_E_InitPrefs()
-	if(kind==1)
-		if(AT_InputUnits()!=0)
-			return -1
-		endif
-	endif
-	String gn=WinName(0,1)
-	if(append!=1 || strlen(gn)==0)
-		gn=UniqueName("ATgraph",6,0)
-		Display/N=$gn as "Academic plot"
-	endif
-	AppendToGraph/W=$gn yw vs xw
-	String traces=TraceNameList(gn,";",1)
-	String tn=StringFromList(ItemsInList(traces)-1,traces)
-	if(kind==1)
-		ModifyGraph/W=$gn muloffset($tn)={1,1e6}
-		AT_E_Style(gn,"Time (s)","I\\BD\\M (µA)")
-		SetAxis/A/R/W=$gn left
-	else
-		AT_E_Style(gn,"Wavelength (nm)","Absorbance")
-	endif
-	AT_E_ApplyLook(gn,1)
-	NVAR grad=root:Packages:AcademicToolbox:gradient
-	AT_E_RecolorGradient(gn,grad)
-	Legend/W=$gn/C/N=ATlegend/F=0/A=RT
-	return 0
-End
-
-// Import graph XY data into this toolbox before opening its correction dialog.
-// Always operates on copies. Scaled Y waves are supported; graph display offsets
-// and multipliers are deliberately not baked into the source absorbance data.
-Function AT_CorrectGraph()
-	String gn=WinName(0,1)
-	if(strlen(gn)==0)
-		DoAlert 0,"Plot the UV-vis spectra first."
-		return -1
-	endif
-	String tl=TraceNameList(gn,";",1),tn,base
-	Variable i,n=ItemsInList(tl),j,k
-	if(n==0)
-		return -1
-	endif
-	// Validate every trace before changing the toolbox dataset.
-	for(i=0;i<n;i+=1)
-		tn=StringFromList(i,tl)
-		WAVE yw=TraceNameToWaveRef(gn,tn)
-		WAVE/Z xw=XWaveRefFromTrace(gn,tn)
-		Duplicate/FREE yw,checkY
-		Duplicate/FREE yw,checkX
-		if(WaveExists(xw))
-			if(numpnts(xw)!=numpnts(yw))
-				DoAlert 0,"Each X/Y pair must have equal lengths."
-				return -1
-			endif
-			checkX=xw[p]
-		else
-			checkX=DimOffset(yw,0)+p*DimDelta(yw,0)
-		endif
-		if(AT_U_MakeAscending(checkX,checkY)<0)
-			DoAlert 0,"Wavelengths must be finite, strictly monotonic, and in nm."
-			return -1
-		endif
-	endfor
-	// Append to toolbox Raw; originals remain. Correction rebuilds all Corr waves.
-	NewDataFolder/O root:AT_UV
-	NewDataFolder/O root:AT_UV:Raw
-	NewDataFolder/O root:AT_UV:Corr
-	NewDataFolder/O root:AT_UV:Native
-	WAVE/Z/T chk=root:AT_UV:BaseName
-	if(!WaveExists(chk))
-		Make/O/T/N=0 root:AT_UV:FileName,root:AT_UV:BaseName,root:AT_UV:Category,root:AT_UV:Sample
-	endif
-	WAVE/T bnw=root:AT_UV:BaseName,fnw=root:AT_UV:FileName,ctw=root:AT_UV:Category,spw=root:AT_UV:Sample
-	for(i=0;i<n;i+=1)
-		tn=StringFromList(i,tl)
-		WAVE yw=TraceNameToWaveRef(gn,tn)
-		WAVE/Z xw=XWaveRefFromTrace(gn,tn)
-		Duplicate/FREE yw,xx
-		Duplicate/FREE yw,yy
-		if(WaveExists(xw))
-			xx=xw[p]
-		else
-			xx=DimOffset(yw,0)+p*DimDelta(yw,0)
-		endif
-		AT_U_MakeAscending(xx,yy)
-		base=AT_U_UniqueBase(CleanupName(NameOfWave(yw),0))
-		Duplicate/O xx,root:AT_UV:Native:$(base+"_nm")
-		Duplicate/O yy,root:AT_UV:Native:$(base+"_Abs")
-		WAVE/Z master=root:AT_UV:Wavelength
-		if(!WaveExists(master))
-			Duplicate/O xx,root:AT_UV:Wavelength
-		endif
-		WAVE master=root:AT_UV:Wavelength
-		Make/O/D/N=(numpnts(master)) root:AT_UV:Raw:$(base+"_Abs")
-		WAVE dst=root:AT_UV:Raw:$(base+"_Abs")
-		dst=(master[p]<xx[0] || master[p]>xx[numpnts(xx)-1]) ? NaN : interp(master[p],xx,yy)
-		j=numpnts(bnw)
-		Redimension/N=(j+1) bnw,fnw,ctw,spw
-		bnw[j]=base
-		fnw[j]=GetWavesDataFolder(yw,2)
-		ctw[j]="GraphImport"
-		spw[j]=NameOfWave(yw)
-	endfor
-	Print "Copied graph data into toolbox. Correction applies to all toolbox spectra. Choose the reference in the next dialog."
-	return AT_U_Correct()
-End
-
-Function AT_ConvertQ()
-	String path=""
-	Variable lambda=1.5418
-	Prompt path,"Full path of 2-theta wave (degrees)"
-	Prompt lambda,"X-ray wavelength (angstrom)"
-	DoPrompt "Convert 2-theta to q",path,lambda
-	if(V_flag)
-		return -1
-	endif
-	WAVE/Z deg=$path
-	if(!WaveExists(deg) || numtype(lambda)!=0 || lambda<=0)
-		DoAlert 0,"Select an existing numeric wave and positive wavelength."
-		return -1
-	endif
-	String nm=UniqueName("AT_qz",1,0)
-	Duplicate deg,$nm
-	WAVE qz=$nm
-	qz=4*pi*sin(deg[p]*pi/360)/lambda
-	SetScale d,0,0,"1/Å",qz
-	Print "Created "+GetWavesDataFolder(qz,2)
-	return 0
-End
-
-Function AT_StackXRD()
-	String gn=WinName(0,1)
-	if(strlen(gn)==0)
-		return -1
-	endif
-	Variable factor=10
-	Prompt factor,"Multiplicative spacing per trace (>1); raw waves stay unchanged"
-	DoPrompt "Stack XRD traces",factor
-	if(V_flag)
-		return -1
-	endif
-	if(numtype(factor)!=0 || factor<=1)
-		return -1
-	endif
-	String tl=TraceNameList(gn,";",1),tn
-	Variable i
-	for(i=0;i<ItemsInList(tl);i+=1)
-		tn=StringFromList(i,tl)
-		ModifyGraph/W=$gn muloffset($tn)={1,factor^i}
-	endfor
-	ModifyGraph/W=$gn log(left)=1
-	AT_E_Style(gn,"q\\Bz\\M (Å\\S-1\\M)","Intensity")
-	return 0
-End
-
-// Run in a fresh experiment before loading research data.
-// Creates synthetic demo waves/graphs, and leaves them available for inspection.
-Function AT_SelfTest()
-	if(DataFolderExists("root:AT_UV") || DataFolderExists("root:AT_Elec"))
-		DoAlert 0,"Run AT_SelfTest in a fresh experiment without toolbox data."
-		return -1
-	endif
-	Variable r,g,b,which,i,n,previous,lum
-	for(which=1;which<=2;which+=1)
-		for(n=1;n<=25;n+=1)
-			previous=-1
-			for(i=0;i<n;i+=1)
-				AT_E_GradColor(which,i,n,r,g,b)
-				lum=0.2126*r+0.7152*g+0.0722*b
-				if(lum<=previous || min(r,min(g,b))<0 || max(r,max(g,b))>65535)
-					Abort "FAIL: gradient order/range"
-				endif
-				previous=lum
-			endfor
-		endfor
-	endfor
-	Make/FREE/D/N=3 gridA={1,2,3},gridB={1,2.5,3},vals={3,2,1}
-	if(AT_SameGrid(gridA,gridB)!=0)
-		Abort "FAIL: interior grid mismatch"
-	endif
-	Make/FREE/D/N=3 descending={3,2,1}
-	AT_U_MakeAscending(descending,vals)
-	if(descending[0]!=1 || vals[0]!=1)
-		Abort "FAIL: descending XY alignment"
-	endif
-	Make/FREE/D/N=3 repeated={1,1,2}
-	if(AT_U_MakeAscending(repeated,vals)!=-1)
-		Abort "FAIL: duplicate wavelength accepted"
-	endif
-	AT_E_InitPrefs()
-	NewDataFolder/O root:AT_UV
-	NewDataFolder/O root:AT_UV:Raw
-	NewDataFolder/O root:AT_UV:Corr
-	Make/O/D/N=1201 root:AT_UV:Wavelength
-	WAVE wl=root:AT_UV:Wavelength
-	wl=400+p
-	Make/O/T/N=2 root:AT_UV:BaseName={"testA","testB"}
-	Make/O/T/N=2 root:AT_UV:Category={"GroupA","GroupB"}
-	Make/O/T/N=2 root:AT_UV:Sample={"s1","s2"}
-	Make/O/T/N=2 root:AT_UV:FileName={"Synthetic A","Synthetic B"}
-	Make/O/D/N=1201 root:AT_UV:Raw:testA_Abs,root:AT_UV:Raw:testB_Abs
-	WAVE ya=root:AT_UV:Raw:testA_Abs,yb=root:AT_UV:Raw:testB_Abs
-	ya=0.1+0.0001*(wl[p]-400)+(wl[p]>850)*0.3
-	yb=0.2+0.0002*(wl[p]-400)+(wl[p]>850)*0.5
-	Duplicate/FREE ya,rawCopy
-	AT_U_CorrectCore(1200,1300,1,850,851,5,2,1,2,2)
-	WAVE ca=root:AT_UV:Corr:testA_Absc,cb=root:AT_UV:Corr:testB_Absc
-	if(abs(ca[800])>1e-10 || abs(cb[800])>1e-10 || abs(ca[451]-ca[450]-0.0001)>1e-9)
-		Abort "FAIL: seam correction or common anchor"
-	endif
-	Duplicate/FREE ca,firstResult
-	AT_U_CorrectCore(1200,1300,1,850,851,5,2,1,2,2)
-	Make/FREE/D/N=1201 err=abs(ca[p]-firstResult[p])+abs(ya[p]-rawCopy[p])
-	WaveStats/Q err
-	if(V_max>1e-12)
-		Abort "FAIL: repeat correction changed result or raw data"
-	endif
-	String gn=UniqueName("ATdemoUV",6,0)
-	Display/N=$gn ca,cb vs wl as "Synthetic UV-vis: corrected, blue gradient"
-	AT_E_Style(gn,"Wavelength (nm)","Absorbance")
-	AT_E_ApplyLook(gn,1)
-	AT_E_RecolorGradient(gn,2)
-	NewDataFolder/O root:AT_Elec
-	NewDataFolder/O root:AT_Elec:Data
-	Make/O/T/N=2 root:AT_Elec:BaseName={"testA","testB"}
-	Make/O/T/N=2 root:AT_Elec:Category={"GroupA","GroupB"}
-	Make/O/T/N=2 root:AT_Elec:Sample={"s1","s2"}
-	Make/O/T/N=2 root:AT_Elec:FileName={"Synthetic A","Synthetic B"}
-	Make/O/D/N=101 root:AT_Elec:Data:testA_Time,root:AT_Elec:Data:testA_DrainI,root:AT_Elec:Data:testA_GateV
-	WAVE tt=root:AT_Elec:Data:testA_Time,ii=root:AT_Elec:Data:testA_DrainI,vg=root:AT_Elec:Data:testA_GateV
-	tt=p
-	ii=-2e-6*(1-exp(-p/20))
-	vg=-0.5
-	Duplicate/O tt,root:AT_Elec:Data:testB_Time
-	Duplicate/O ii,root:AT_Elec:Data:testB_DrainI
-	Duplicate/O vg,root:AT_Elec:Data:testB_GateV
-	WAVE ib=root:AT_Elec:Data:testB_DrainI
-	ib*=2
-	Make/FREE/D/N=0 holdV,holdI
-	AT_E_HarvestPoints(ii,vg,10,1,holdV,holdI)
-	if(numpnts(holdV)!=1 || abs(holdV[0]+0.5)>1e-12)
-		Abort "FAIL: steady-state harvesting"
-	endif
-	gn=UniqueName("ATdemoId",6,0)
-	Display/N=$gn ii,ib vs tt as "Synthetic Id: µA versus seconds, red gradient"
-	ModifyGraph/W=$gn muloffset={1,1e6}
-	AT_E_Style(gn,"Time (s)","I\\BD\\M (µA)")
-	AT_E_ApplyLook(gn,1)
-	AT_E_RecolorGradient(gn,1)
-	AT_TestVoltagePlots()
-	AT_Panel()
-	Print "PASS: gradients 1-25 traces; grid validation; descending XY; seam/anchor; repeatability; raw preservation; steady-state; demo styling."
-	return 0
-End
-
-// Run from AT_SelfTest, which creates these fixtures only in a fresh experiment.
-Function AT_TestVoltagePlots()
-	WAVE/Z ta=root:AT_Elec:Data:testA_Time,tb=root:AT_Elec:Data:testB_Time
-	WAVE/Z ia=root:AT_Elec:Data:testA_DrainI,ib=root:AT_Elec:Data:testB_DrainI
-	WAVE/Z va=root:AT_Elec:Data:testA_GateV,vb=root:AT_Elec:Data:testB_GateV
-	if(!WaveExists(ta) || !WaveExists(tb) || !WaveExists(ia) || !WaveExists(ib) || !WaveExists(va) || !WaveExists(vb))
-		return -1
-	endif
-	// Distinct time origins and voltage curves catch cross-sample alignment errors.
-	ta=3+p
-	tb=7+2*p
-	va=-0.1-0.005*p
-	vb=-0.2-0.002*p
-	Duplicate/FREE ta,saveTA
-	Duplicate/FREE tb,saveTB
-	Duplicate/FREE va,saveVA
-	Duplicate/FREE vb,saveVB
-	Duplicate/O va,root:AT_Elec:Data:testA_Vref
-	String gn=UniqueName("ATmultiCheck",6,0),an=NameOfWave(ia),bn=NameOfWave(ib)
-	Display/N=$gn ia vs ta as "Voltage overlay regression"
-	AppendToGraph/W=$gn ib vs tb
-	ModifyGraph/W=$gn muloffset($an)={1,1e6},offset($an)={-3,0}
-	ModifyGraph/W=$gn muloffset($bn)={2,1e6},offset($bn)={-14,0}
-	if(AT_E_AddVoltage(1,gName=gn,currentTrace=an)!=0 || AT_E_AddVoltage(1,gName=gn,currentTrace=bn)!=0)
-		Abort "FAIL: two-sample Vg overlays"
-	endif
-	if(ItemsInList(TraceNameList(gn,";",1))!=4)
-		Abort "FAIL: second sample replaced first overlay"
-	endif
-	if(AT_E_AddVoltage(1,gName=gn,currentTrace=an)!=0 || ItemsInList(TraceNameList(gn,";",1))!=4)
-		Abort "FAIL: same-sample overlay duplication"
-	endif
-	if(AT_E_AddVoltage(2,gName=gn,currentTrace=an)!=0 || ItemsInList(TraceNameList(gn,";",1))!=5)
-		Abort "FAIL: mixed Vg/Vref overlays"
-	endif
-	AT_E_RecolorGradient(gn,2)
-	String tl=TraceNameList(gn,";",1),tn,info,pair
-	Variable i,n=0,xoff,yoff,xmul,ymul,cr,cg,cb
-	for(i=0;i<ItemsInList(tl);i+=1)
-		tn=StringFromList(i,tl)
-		if(!AT_E_IsOverlay(tn))
-			continue
-		endif
-		n+=1
-		WAVE v=TraceNameToWaveRef(gn,tn),x=XWaveRefFromTrace(gn,tn)
-		info=TraceInfo(gn,tn,0)
-		if(cmpstr(StringByKey("YAXIS",info),"right")!=0)
-			Abort "FAIL: voltage overlay axis"
-		endif
-		xoff=0;yoff=0;xmul=0;ymul=0;cr=0;cg=0;cb=0
-		sscanf StringByKey("offset(x)",info,"="),"{%g,%g}",xoff,yoff
-		sscanf StringByKey("muloffset(x)",info,"="),"{%g,%g}",xmul,ymul
-		sscanf StringByKey("rgb(x)",info,"="),"(%g,%g,%g)",cr,cg,cb
-		Variable isB=cmpstr(NameOfWave(v),"testB_GateV")==0
-		if(xoff!=(-3-11*isB) || xmul!=(1+isB) || yoff!=0 || ymul!=1)
-			Abort "FAIL: sample-specific overlay time alignment"
-		endif
-		if(cmpstr(NameOfWave(x),StringFromList(isB,"testA_Time;testB_Time"))!=0)
-			Abort "FAIL: sample-specific overlay Time wave"
-		endif
-		if(cr!=32768 || cg!=32768 || cb!=32768)
-			Abort "FAIL: gradient recolored grey voltage overlays"
-		endif
-	endfor
-	if(n!=3)
-		Abort "FAIL: voltage overlay count"
-	endif
-	if(AT_E_PlotVoltageTime(1,bases="testA;testB;",zeroT=1,revY=1,colorMode=5,showLeg=1)!=0)
-		Abort "FAIL: standalone Vg plot"
-	endif
-	String vgGraph=WinName(0,1)
-	tl=TraceNameList(vgGraph,";",1)
-	if(ItemsInList(tl)!=2)
-		Abort "FAIL: standalone Vg trace count"
-	endif
-	for(i=0;i<ItemsInList(tl);i+=1)
-		tn=StringFromList(i,tl)
-		WAVE v=TraceNameToWaveRef(vgGraph,tn)
-		if(!stringmatch(NameOfWave(v),"*_GateV"))
-			Abort "FAIL: standalone Vg contains another quantity"
-		endif
-		info=TraceInfo(vgGraph,tn,0)
-		sscanf StringByKey("offset(x)",info,"="),"{%g,%g}",xoff,yoff
-		if(xoff!=(-3-4*(cmpstr(NameOfWave(v),"testB_GateV")==0)))
-			Abort "FAIL: standalone sample-specific time zero"
-		endif
-	endfor
-	DoUpdate
-	GetAxis/W=$vgGraph/Q left
-	if(V_min<=V_max)
-		Abort "FAIL: standalone Vg axis inversion"
-	endif
-	Make/FREE/D/N=(numpnts(ta)) sourceError=abs(ta[p]-saveTA[p])+abs(tb[p]-saveTB[p])+abs(va[p]-saveVA[p])+abs(vb[p]-saveVB[p])
-	WaveStats/Q sourceError
-	if(V_max!=0)
-		Abort "FAIL: voltage plotting changed source values"
-	endif
-	Print "PASS: multi-sample Vg/Vref, per-sample replacement/alignment, grey recoloring, standalone Vg, source preservation."
-	return 0
-End
-
-Function AT_TestLoaders()
-	// Requires AT_SelfTest demo data; uses unique names and never clears data.
-	WAVE/Z/T bnw=root:AT_Elec:BaseName
-	if(!WaveExists(bnw))
-		return -1
-	endif
-	NewPath/O/Q AT_Epath "Macintosh HD:Applications:Igor Pro 8 Folder:User Procedures:validation:"
-	NewPath/O/Q AT_Upath "Macintosh HD:Applications:Igor Pro 8 Folder:User Procedures:validation:"
-	NVAR isc=root:Packages:AcademicToolbox:currentScale
-	NVAR tsc=root:Packages:AcademicToolbox:timeScale
-	Variable oldI=isc,oldT=tsc
-	isc=1e-6
-	tsc=0.001
-	Variable rc=AT_E_Ingest("s1_Electrical.txt","_",1,1,0,AT_E_EncCode(2))
-	isc=oldI
-	tsc=oldT
-	if(rc==0)
-		Abort "FAIL: electrical import"
-	endif
-	String base=bnw[numpnts(bnw)-1]
-	WAVE ii=root:AT_Elec:Data:$(base+"_DrainI"),tt=root:AT_Elec:Data:$(base+"_Time")
-	WAVE nativeI=$("root:AT_Elec:Native:"+base+":DrainI"), nativeT=$("root:AT_Elec:Native:"+base+":Time")
-	if(ii[0]!=nativeI[0] || tt[1]!=nativeT[1])
-		Abort "FAIL: fixed SI input changed source values"
-	endif
-	AT_E_Ingest("s2_NoTime.txt","_",1,1,0,AT_E_EncCode(2))
-	base=bnw[numpnts(bnw)-1]
-	if(exists("root:AT_Elec:Data:"+base+"_Time"))
-		Abort "FAIL: missing time fabricated"
-	endif
-	Variable regridded=0
-	rc=AT_U_Ingest("s3_UV.txt","_",1,1,1,0,AT_E_EncCode(2),regridded)
-	if(rc==0)
-		Abort "FAIL: JASCO import"
-	endif
-	WAVE/T ub=root:AT_UV:BaseName
-	base=ub[numpnts(ub)-1]
-	WAVE raw=root:AT_UV:Raw:$(base+"_Abs")
-	if(abs(raw[0]-0.1)>1e-12 || abs(raw[600]-0.2)>1e-12)
-		Abort "FAIL: descending JASCO regridding"
-	endif
-	rc=AT_U_Ingest("s4_UVplain.txt","_",1,1,2,0,AT_E_EncCode(2),regridded)
-	if(rc==0 || regridded!=2)
-		Abort "FAIL: plain text import"
-	endif
-	Print "PASS: shared folder/single-file import core; fixed electrical A/V/s units; missing time; JASCO header/footer; descending/regridded UV; plain text UV."
-	return 0
-End
 
 Static Function/S AT_FileList(pathName,extensions)
 	String pathName,extensions
@@ -3462,7 +2640,7 @@ Function AT_LoadPath(fullPath,kind,[fmt,skipLines,encoding])
 		if(!WaveExists(ec))
 			Make/O/T/N=0 root:AT_Elec:FileName,root:AT_Elec:BaseName,root:AT_Elec:Category,root:AT_Elec:Sample
 		endif
-		return AT_E_Ingest(fn,"auto",3,1,skipLines,encoding)
+		return AT_E_Ingest(fn,"space",1,1,skipLines,encoding)
 	elseif(kind==2)
 		NewPath/O/Q/Z AT_Upath dir
 		if(V_flag!=0)
@@ -3480,21 +2658,462 @@ Function AT_LoadPath(fullPath,kind,[fmt,skipLines,encoding])
 	return 0
 End
 
-// Regression check: folder discovery only; imports no experimental data.
-Function AT_TestFolderIndex()
-	NewPath/O/Q AT_IndexTest "Macintosh HD:Applications:Igor Pro 8 Folder:User Procedures:validation:"
-	String files=AT_FileList("AT_IndexTest",".txt;.txt")
-	String expected="s1_Electrical.txt;s2_NoTime.txt;s3_UV.txt;s4_UVplain.txt;"
-	Variable i
-	for(i=0;i<ItemsInList(expected);i+=1)
-		if(WhichListItem(StringFromList(i,expected),files)<0)
-			Abort "FAIL: folder discovery missed "+StringFromList(i,expected)
-		endif
-	endfor
-	if(ItemsInList(files)!=4)
-		Abort "FAIL: folder discovery count/deduplication"
+
+// New imports use column-first names. Existing experiments remain readable.
+Static Function/S AT_E_ColumnPath(base,column)
+	String base,column
+	String path="root:AT_Elec:Data:"+PossiblyQuoteName(column+"_"+base)
+	if(exists(path))
+		return path
 	endif
-	Print "PASS: symbolic folder lookup, .txt filtering, duplicate extension removal: "+files
-	KillPath/Z AT_IndexTest
+	return "root:AT_Elec:Data:"+PossiblyQuoteName(base+"_"+column)
+End
+
+Static Function/S AT_E_ColumnBase(nm,column)
+	String nm,column
+	Variable n=strlen(column)
+	if(strsearch(nm,column+"_",0)==0)
+		return nm[n+1,strlen(nm)-1]
+	endif
+	if(stringmatch(nm,"*_"+column))
+		return nm[0,strlen(nm)-n-2]
+	endif
+	return ""
+End
+
+Static Function AT_E_StoreCanonical(sourceName,base,column,units)
+	String sourceName,base,column,units
+	if(strlen(sourceName)==0)
+		return 0
+	endif
+	WAVE/Z src=$sourceName
+	if(!WaveExists(src) || WaveType(src)==0)
+		return 0
+	endif
+	String dest="root:AT_Elec:Data:"+PossiblyQuoteName(column+"_"+base)
+	Duplicate/O src,$dest
+	WAVE dst=$dest
+	SetScale d,0,0,units,dst
 	return 0
+End
+
+
+// ---------- Graph actions ----------
+Function AT_AddLegend(gn)
+    String gn
+    if(strlen(gn)==0)
+        gn=WinName(0,1)
+    endif
+    if(strlen(gn)==0)
+        return -1
+    endif
+    // No font, frame, size, or position overrides.
+    Legend/W=$gn/N=legOE
+    return 0
+End
+
+// Rebuild the same plot with Igor factory defaults. Data, axis assignments,
+// error bars, label text and display unit/time transformations are retained.
+// The original is kept until the replacement has been built successfully.
+Function AT_RestoreDefault(gn)
+    String gn
+    if(strlen(gn)==0)
+        gn=WinName(0,1)
+    endif
+    if(strlen(gn)==0 || WinType(gn)!=1)
+        return -1
+    endif
+    String recreation=WinRecreation(gn,0),df=GetDataFolder(1),line,newGN="",tl=TraceNameList(gn,";",1)
+    if(ItemsInList(tl)==0 || strlen(ImageNameList(gn,";"))+strlen(ContourNameList(gn,";"))>0 || strlen(ChildWindowList(gn))>0)
+        DoAlert 0,"Restore supports standalone curve graphs. This graph was left unchanged."
+        return -1
+    endif
+    Variable i,j,k,err=0,oldPrefs
+    Preferences/Q 0
+    oldPrefs=V_flag
+    try
+        for(i=0;i<ItemsInList(recreation,"\r");i+=1)
+            line=TrimString(StringFromList(i,recreation,"\r"))
+            if(stringmatch(line,"SetDataFolder root*") || stringmatch(line,"SetDataFolder 'root*"))
+                Execute/Q/Z line
+                if(V_flag)
+                    Abort "Cannot restore graph data folder."
+                endif
+            elseif(stringmatch(line,"Display *") || stringmatch(line,"Display/*"))
+                j=strsearch(line,"/W=",0)
+                if(j>=0)
+                    k=strsearch(line,")",j)
+                    line=line[0,j-1]+line[k+1,strlen(line)-1]
+                endif
+                Execute/Q/Z line
+                if(V_flag)
+                    Abort "Cannot rebuild graph."
+                endif
+                newGN=WinName(0,1)
+            elseif(stringmatch(line,"AppendToGraph*") || stringmatch(line,"ErrorBars*") || stringmatch(line,"Label *"))
+                if(strlen(newGN)==0)
+                    Abort "No graph created."
+                endif
+                Execute/Q/Z line
+                if(V_flag)
+                    Abort "Cannot rebuild a graph component."
+                endif
+            endif
+        endfor
+        if(strlen(newGN)==0 || cmpstr(TraceNameList(newGN,";",1),tl)!=0)
+            Abort "Graph trace reconstruction mismatch."
+        endif
+        // Unit conversions and time-zero alignment describe the plotted data.
+        // Preserve them separately from appearance, to keep the labels truthful.
+        String tn,info,pair
+        Variable xo,yo,xm,ym
+        for(i=0;i<ItemsInList(tl);i+=1)
+            tn=StringFromList(i,tl)
+            info=TraceInfo(gn,tn,0)
+            pair=StringByKey("offset(x)",info,"=")
+            xo=0; yo=0
+            if(strlen(pair)>0)
+                sscanf pair,"{%g,%g}",xo,yo
+            endif
+            pair=StringByKey("muloffset(x)",info,"=")
+            xm=0; ym=0
+            if(strlen(pair)>0)
+                sscanf pair,"{%g,%g}",xm,ym
+            endif
+            ModifyGraph/W=$newGN offset($tn)={xo,yo},muloffset($tn)={xm,ym}
+        endfor
+    catch
+        err=GetRTError(1)
+        if(strlen(newGN)>0 && cmpstr(newGN,gn)!=0)
+            KillWindow/Z $newGN
+        endif
+        SetDataFolder df
+        Preferences/Q oldPrefs
+        DoAlert 0,"Could not rebuild this graph. The original graph is unchanged."
+        return -1
+    endtry
+    SetDataFolder df
+    Preferences/Q oldPrefs
+    KillWindow $gn
+    DoWindow/W=$newGN/C $gn
+    return 0
+End
+
+Static Function/S AT_TraceCategory(gn,tn)
+    String gn,tn
+    WAVE/Z w=TraceNameToWaveRef(gn,tn)
+    if(!WaveExists(w))
+        return "Uncategorized"
+    endif
+    String cat=StringByKey("ATCategory",note(w),"=",";")
+    if(strlen(cat)>0)
+        return cat
+    endif
+    String nm=NameOfWave(w),base,folder
+    Variable kind,i
+    for(kind=0;kind<2;kind+=1)
+        folder=SelectString(kind,"root:AT_Elec:","root:AT_UV:")
+        WAVE/Z/T bn=$(folder+"BaseName"),ct=$(folder+"Category")
+        if(!WaveExists(bn) || !WaveExists(ct))
+            continue
+        endif
+        for(i=0;i<numpnts(bn);i+=1)
+            base=bn[i]
+            if(stringmatch(nm,"*_"+base) || cmpstr(nm,base+"_Abs")==0 || cmpstr(nm,base+"_Absc")==0)
+                return ct[i]
+            endif
+        endfor
+    endfor
+    String samp=""
+    Variable pos=AT_E_FindSample(nm,samp)
+    if(pos>=0)
+        cat=StringFromList(0,nm[pos+strlen(samp)+1,strlen(nm)-1],"_")
+        if(strlen(cat)>0)
+            return cat
+        endif
+    endif
+    return "Uncategorized"
+End
+
+// Fill an exact planned color for each data trace, in trace order. Overlays stay grey.
+Static Function AT_GraphColors(gn,mode,colors,traces)
+    String gn
+    Variable mode
+    WAVE colors
+    WAVE/T traces
+    String all=TraceNameList(gn,";",1),tn,cats="",cat
+    Variable i,n=0,ci,r,g,b
+    Redimension/N=(ItemsInList(all)) traces
+    for(i=0;i<ItemsInList(all);i+=1)
+        tn=StringFromList(i,all)
+        if(cmpstr(tn,"ATvgOverlay")!=0 && cmpstr(tn,"ATvrefOverlay")!=0)
+            traces[n]=tn
+            n+=1
+        endif
+    endfor
+    Redimension/N=(n) traces
+    Redimension/N=(n,3) colors
+    Make/FREE/N=(n) group,ordinal,count=0
+    for(i=0;i<n;i+=1)
+        cat=AT_TraceCategory(gn,traces[i])
+        ci=WhichListItem(cat,cats)
+        if(ci<0)
+            cats+=cat+";"
+            ci=ItemsInList(cats)-1
+        endif
+        group[i]=ci
+        ordinal[i]=count[ci]
+        count[ci]+=1
+    endfor
+    if(mode==3 && ItemsInList(cats)>2)
+        Print "Blue/red mode alternates blue and red for more than two categories; use Distinct category colors for a unique category palette."
+    endif
+    for(i=0;i<n;i+=1)
+        if(mode<=2)
+            AT_E_GradColor(mode,i,n,r,g,b)
+        elseif(mode==3)
+            AT_E_GradColor(2-mod(group[i],2),ordinal[i],count[group[i]],r,g,b)
+        else
+            AT_E_Palette(group[i],r,g,b)
+        endif
+        colors[i][0]=round(r); colors[i][1]=round(g); colors[i][2]=round(b)
+    endfor
+    return n
+End
+
+Function AT_RecolorGraph(gn,mode)
+    String gn
+    Variable mode
+    if(strlen(gn)==0)
+        gn=WinName(0,1)
+    endif
+    if(strlen(gn)==0)
+        return -1
+    endif
+    Make/FREE/D/N=(0,3) colors
+    Make/FREE/T/N=0 traces
+    Variable i,n=AT_GraphColors(gn,mode,colors,traces)
+    for(i=0;i<n;i+=1)
+        ModifyGraph/W=$gn rgb($traces[i])=(colors[i][0],colors[i][1],colors[i][2])
+    endfor
+    return n
+End
+
+Function AT_PalettePopup(pa) : PopupMenuControl
+    STRUCT WMPopupAction &pa
+    if(pa.eventCode==2)
+        ControlInfo/W=$pa.win pmGrad
+        AT_ColorPicker(WinName(0,1),V_Value)
+    endif
+    return 0
+End
+
+// The internal waves below only drive the swatch UI; no color-table export feature.
+Function AT_ColorPicker(gn,mode)
+    String gn
+    Variable mode
+    if(strlen(gn)==0)
+        DoAlert 0,"Plot a graph first, then open Curve color."
+        return -1
+    endif
+    AT_E_InitPrefs()
+    KillWindow/Z ATcolorPicker
+    NewDataFolder/O root:Packages:AcademicToolbox:Picker
+    String/G root:Packages:AcademicToolbox:Picker:graph=gn
+    String/G root:Packages:AcademicToolbox:Picker:traceList=TraceNameList(gn,";",1)
+    Make/FREE/D/N=(0,3) planned
+    Make/FREE/T/N=0 traces
+    Variable n=AT_GraphColors(gn,mode,planned,traces),i,r,g,b,row,total=n+22
+    Make/O/T/N=(total,3) root:Packages:AcademicToolbox:Picker:labels
+    Make/O/D/N=(total+1,3) root:Packages:AcademicToolbox:Picker:colors=65535
+    Make/O/W/U/N=(total,3,2) root:Packages:AcademicToolbox:Picker:selection=0
+    WAVE/T labels=root:Packages:AcademicToolbox:Picker:labels
+    WAVE colors=root:Packages:AcademicToolbox:Picker:colors,sel=root:Packages:AcademicToolbox:Picker:selection
+    SetDimLabel 1,0,Color,labels
+    SetDimLabel 1,1,Source,labels
+    SetDimLabel 1,2,RGB_16bit,labels
+    SetDimLabel 2,1,backColors,sel
+    String label,rgb
+    for(row=0;row<total;row+=1)
+        if(row<n)
+            r=planned[row][0]; g=planned[row][1]; b=planned[row][2]
+            label="Graph: "+traces[row]
+        elseif(row<n+14)
+            i=row-n
+            AT_E_GradColor(1+floor(i/7),mod(i,7),7,r,g,b)
+            label=SelectString(i>=7,"Red ","Blue ")+num2istr(mod(i,7)+1)
+        else
+            i=row-n-14
+            AT_E_Palette(i,r,g,b)
+            label="Category "+num2istr(i+1)
+        endif
+        colors[row+1][0]=r; colors[row+1][1]=g; colors[row+1][2]=b
+        labels[row][0]=""
+        labels[row][1]=label
+        sprintf rgb,"%d, %d, %d",r,g,b
+        labels[row][2]=rgb
+        sel[row][0][1]=row+1
+    endfor
+    NewPanel/K=1/N=ATcolorPicker/W=(150,100,850,540) as "Exact curve colors"
+    PopupMenu pmTrace,pos={14,14},bodyWidth=540,title="Curve",mode=1,value=#"root:Packages:AcademicToolbox:Picker:traceList"
+    ListBox lbColors,pos={14,50},size={670,330},listWave=labels,selWave=sel,colorWave=colors,mode=2,selRow=0,widths={52,390,210}
+    Button bColorApply,pos={14,396},size={220,26},proc=AT_ColorApply,title="Apply selected color to curve"
+    TitleBox hint,pos={250,402},title="RGB uses Igor's exact 0-65535 values.",frame=0
+    return 0
+End
+
+Function AT_ColorApply(ba) : ButtonControl
+    STRUCT WMButtonAction &ba
+    if(ba.eventCode!=2)
+        return 0
+    endif
+    SVAR gn=root:Packages:AcademicToolbox:Picker:graph
+    if(WinType(gn)!=1)
+        DoAlert 0,"The selected graph has closed. Reopen Curve color."
+        return -1
+    endif
+    ControlInfo/W=ATcolorPicker pmTrace
+    String tn=S_Value
+    if(WhichListItem(tn,TraceNameList(gn,";",1))<0)
+        return -1
+    endif
+    ControlInfo/W=ATcolorPicker lbColors
+    Variable row=V_Value+1
+    WAVE colors=root:Packages:AcademicToolbox:Picker:colors
+    if(row<1 || row>=DimSize(colors,0))
+        return -1
+    endif
+    ModifyGraph/W=$gn rgb($tn)=(colors[row][0],colors[row][1],colors[row][2])
+    return 0
+End
+
+// ---------- Gate-step artifact correction ----------
+Static Function/S AT_E_CurrentPath(base,column)
+    String base,column
+    NVAR/Z use=root:Packages:AcademicToolbox:useCorrected
+    String path="root:AT_Elec:Corr:"+PossiblyQuoteName(column+"_"+base)
+    if(NVAR_Exists(use))
+        if(use && exists(path)==1)
+            return path
+        endif
+    endif
+    return AT_E_ColumnPath(base,column)
+End
+
+// Start at the first sample carrying the NEW GateV. Adjacent masks are unioned.
+// No points are removed at the beginning unless a recorded gate change occurs.
+Function AT_E_GateMask(vg,omit,tol,mask)
+    WAVE vg,mask
+    Variable omit,tol
+    if(numtype(omit+tol)!=0 || omit<1 || omit>10 || omit!=round(omit) || tol<0)
+        return -1
+    endif
+    Variable i,j,n=numpnts(vg),changes=0
+    Redimension/N=(n) mask
+    mask=0
+    for(i=1;i<n;i+=1)
+        if(numtype(vg[i])==0 && numtype(vg[i-1])==0 && abs(vg[i]-vg[i-1])>tol)
+            changes+=1
+            for(j=i;j<min(n,i+omit);j+=1)
+                mask[j]=1
+            endfor
+        endif
+    endfor
+    return changes
+End
+
+Function AT_E_CorrectOne(base,omit,tol)
+    String base
+    Variable omit,tol
+    WAVE/Z vg=$AT_E_ColumnPath(base,"GateV")
+    if(!WaveExists(vg))
+        return -1
+    endif
+    Make/FREE/D/N=0 mask
+    Variable changes=AT_E_GateMask(vg,omit,tol,mask),i,done=0
+    if(changes<0)
+        return -1
+    endif
+    NewDataFolder/O root:AT_Elec:Corr
+    String column,dest
+    for(i=0;i<2;i+=1)
+        column=StringFromList(i,"DrainI;GateI")
+        WAVE/Z raw=$AT_E_ColumnPath(base,column)
+        if(!WaveExists(raw))
+            continue
+        endif
+        if(numpnts(raw)!=numpnts(vg))
+            Print "Skipped unequal GateV/"+column+" lengths: "+base
+            continue
+        endif
+        dest="root:AT_Elec:Corr:"+PossiblyQuoteName(column+"_"+base)
+        Duplicate/O raw,$dest
+        WAVE corrected=$dest
+        Redimension/D corrected
+        corrected=mask[p] ? NaN : raw[p]
+        Note corrected,"ATCorrection=gate-step omission;ATRemovePoints="+num2istr(omit)+";ATToleranceV="+num2str(tol)+";ATSource="+GetWavesDataFolder(raw,2)+";"
+        done+=1
+    endfor
+    Print base+": "+num2istr(changes)+" gate changes; "+num2istr(sum(mask))+" points omitted in "+num2istr(done)+" current wave(s)."
+    return done
+End
+
+Function AT_E_CorrectCurrents()
+    WAVE/Z/T bn=root:AT_Elec:BaseName,ct=root:AT_Elec:Category,sp=root:AT_Elec:Sample
+    if(!WaveExists(bn))
+        DoAlert 0,"Load electrical data first."
+        return -1
+    endif
+    Variable omit=1,tol=1e-4
+    Prompt omit,"Number of points to omit at each gate change (integer 1-10)"
+    Prompt tol,"Gate-change tolerance (V)"
+    DoPrompt "Correct Id and Ig (raw data preserved)",omit,tol
+    if(V_flag)
+        return -1
+    endif
+    if(numtype(omit+tol)!=0 || omit<1 || omit>10 || omit!=round(omit) || tol<0)
+        DoAlert 0,"Use an integer from 1 to 10 and a nonnegative voltage tolerance."
+        return -1
+    endif
+    Make/FREE/N=(numpnts(bn)) idx=p
+    Variable n=AT_E_PickFrom(idx,bn,ct,sp),i,done=0
+    if(n<=0)
+        return -1
+    endif
+    for(i=0;i<n;i+=1)
+        done+=max(0,AT_E_CorrectOne(bn[idx[i]],omit,tol))
+    endfor
+    AT_E_InitPrefs()
+    NVAR use=root:Packages:AcademicToolbox:useCorrected
+    use=1
+    // Existing plots of selected raw current waves are switched to the copies.
+    String graphs=WinList("*",";","WIN:1"),gn,tl,tn,base,col,newPath
+    Variable j,k,q
+    for(j=0;j<ItemsInList(graphs);j+=1)
+        gn=StringFromList(j,graphs)
+        tl=TraceNameList(gn,";",1)
+        for(k=0;k<ItemsInList(tl);k+=1)
+            tn=StringFromList(k,tl)
+            WAVE/Z plotted=TraceNameToWaveRef(gn,tn)
+            if(!WaveExists(plotted))
+                continue
+            endif
+            for(q=0;q<n;q+=1)
+                base=bn[idx[q]]
+                for(i=0;i<2;i+=1)
+                    col=StringFromList(i,"DrainI;GateI")
+                    WAVE/Z original=$AT_E_ColumnPath(base,col)
+                    newPath=AT_E_CurrentPath(base,col)
+                    if(WaveExists(original) && cmpstr(GetWavesDataFolder(plotted,2),GetWavesDataFolder(original,2))==0)
+                        WAVE/Z copy=$newPath
+                        if(WaveExists(copy))
+                            ReplaceWave/W=$gn trace=$tn,copy
+                        endif
+                    endif
+                endfor
+            endfor
+        endfor
+    endfor
+    Print "Corrected copies: root:AT_Elec:Corr. NaNs omit artifacts without shifting Time/GateV. Uncheck Use corrected to use raw currents in new plots."
+    return done
 End
