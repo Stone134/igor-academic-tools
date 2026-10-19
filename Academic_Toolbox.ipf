@@ -4,7 +4,7 @@
 
 // Academic Toolbox, simplified 2026-10-16. Igor Pro 8+.
 // Macros: Electrical / OECT and UV-vis. AT_Panel() opens Electrical / OECT.
-// New plots use Thesis2; Apply Thesis2 changes ONLY the eleven specified settings.
+// New plots use Thesis2, optional free sizing, and plain numeric tick labels.
 // Current correction omits points with NaN in COPIES; raw data and X alignment stay intact.
 // Exact palette swatches are available from Curve color in either panel.
 Constant kAT_E_NPAL=8
@@ -1474,6 +1474,7 @@ Function AT_E_InitPrefs()
     AT_E_DefPref("currentScale",1)
     AT_E_DefPref("timeScale",1)
     AT_E_DefPref("useCorrected",0)
+    AT_E_DefPref("freeGraphSize",0)
     return 0
 End
 
@@ -1487,7 +1488,7 @@ Static Function AT_E_DefPref(nm, val)
 End
 
 
-// Apply exactly the requested Thesis2 settings.
+// Thesis2 with the requested free-size option and explicit-unit tick formatting.
 Function AT_E_ApplyLook(gName, doTraces)
     String gName
     Variable doTraces // retained for existing callers
@@ -1497,8 +1498,13 @@ Function AT_E_ApplyLook(gName, doTraces)
     if(strlen(gName)==0 || WinType(gName)!=1)
         return -1
     endif
-    // Thesis2: no other axis, margin, marker, font, or trace settings are touched.
-    ModifyGraph/W=$gName axThick=0.75,btLen=3,fSize=9,lsize=0.75,expand=2,font="Arial",tick=2,standoff=0,width=170.079,height=99.2126
+    ModifyGraph/W=$gName axThick=0.75,btLen=3,fSize=9,lsize=0.75,expand=2,font="Arial",tick=2,standoff=0
+    AT_ApplyGraphSize(gName)
+    // Units are explicit in axis titles. Current traces use an A-to-uA display
+    // multiplier while retaining A in their wave metadata; do not repeat that
+    // metadata beside ticks. Keep ordinary measurement ranges in fixed notation
+    // so 1000 seconds is labelled 1000, not 1 ks. Source waves are unchanged.
+    ModifyGraph/W=$gName tickUnit=1,lowTrip=1e-15,highTrip=1e15
     // Igor cannot mirror into an edge already occupied by a real axis.
     // Apply mirror=1 wherever legal, retaining right/top voltage axes.
     String axes=AxisList(gName)
@@ -1508,6 +1514,37 @@ Function AT_E_ApplyLook(gName, doTraces)
     if(WhichListItem("bottom",axes)>=0 && WhichListItem("top",axes)<0)
         ModifyGraph/W=$gName mirror(bottom)=1
     endif
+    return 0
+End
+
+// Change only width/height. Auto mode lets each dimension follow window resizing.
+Function AT_ApplyGraphSize(gName)
+    String gName
+    AT_E_InitPrefs()
+    if(strlen(gName)==0)
+        gName=WinName(0,1)
+    endif
+    if(strlen(gName)==0 || WinType(gName)!=1)
+        return -1
+    endif
+    NVAR freeSize=root:Packages:AcademicToolbox:freeGraphSize
+    if(freeSize)
+        ModifyGraph/W=$gName width=0,height=0
+    else
+        ModifyGraph/W=$gName width=170.079,height=99.2126
+    endif
+    return 0
+End
+
+Function AT_FreeSizeCheck(ca) : CheckBoxControl
+    STRUCT WMCheckboxAction &ca
+    if(ca.eventCode!=2)
+        return 0
+    endif
+    AT_E_InitPrefs()
+    NVAR freeSize=root:Packages:AcademicToolbox:freeGraphSize
+    freeSize=ca.checked
+    AT_ApplyGraphSize("")
     return 0
 End
 
@@ -2394,7 +2431,7 @@ Static Function AT_OpenPanel(uv)
     if(V_flag)
         return 0
     endif
-    NewPanel/K=1/N=$pn/W=(60,50,460,50+graphY+216) as title
+    NewPanel/K=1/N=$pn/W=(60,50,460,50+graphY+244) as title
     if(uv)
         GroupBox gbData,win=$pn,pos={10,8},size={380,172},title="UV-vis"
         Button bLoadU,win=$pn,pos={24,30},size={170,26},proc=AT_Button,title="Load folder..."
@@ -2418,14 +2455,15 @@ Static Function AT_OpenPanel(uv)
         Button bFixI,win=$pn,pos={24,202},size={350,26},proc=AT_Button,title="Correct Id / Ig (gate steps)..."
         CheckBox cbCorrected,win=$pn,pos={24,242},title="Use corrected currents when available",variable=root:Packages:AcademicToolbox:useCorrected
     endif
-    GroupBox gbGraph,win=$pn,pos={10,graphY},size={380,204},title="Graph style and colors"
+    GroupBox gbGraph,win=$pn,pos={10,graphY},size={380,232},title="Graph style and colors"
     Button bApplyTop,win=$pn,pos={24,graphY+24},size={170,26},proc=AT_Button,title="Apply Thesis2"
     Button bDefault,win=$pn,pos={204,graphY+24},size={170,26},proc=AT_Button,title="Restore to default"
     Button bLegend,win=$pn,pos={24,graphY+56},size={170,26},proc=AT_Button,title="Add legend"
     Button bRecolor,win=$pn,pos={204,graphY+56},size={170,26},proc=AT_Button,title="Recolor"
-    PopupMenu pmGrad,win=$pn,pos={24,graphY+94},bodyWidth=280,title="Colors",mode=grad,proc=AT_GradientPopup,value="Red (dark to light);Blue (dark to light);Categories blue & red;Distinct category colors"
-    PopupMenu pmPalette,win=$pn,pos={24,graphY+162},title="Curve color",mode=0,proc=AT_PalettePopup,value="Exact palette and curve colors..."
-    AT_DrawPalette(pn,grad,graphY+126)
+    CheckBox cbFreeSize,win=$pn,pos={24,graphY+94},title="Free graph size (resize window)",variable=root:Packages:AcademicToolbox:freeGraphSize,proc=AT_FreeSizeCheck
+    PopupMenu pmGrad,win=$pn,pos={24,graphY+122},bodyWidth=280,title="Colors",mode=grad,proc=AT_GradientPopup,value="Red (dark to light);Blue (dark to light);Categories blue & red;Distinct category colors"
+    PopupMenu pmPalette,win=$pn,pos={24,graphY+190},title="Curve color",mode=0,proc=AT_PalettePopup,value="Exact palette and curve colors..."
+    AT_DrawPalette(pn,grad,graphY+154)
     return 0
 End
 
@@ -2509,10 +2547,10 @@ Function AT_GradientPopup(pa) : PopupMenuControl
         return 0
     endif
     String key="gradient"
-    Variable y=418
+    Variable y=446
     if(cmpstr(pa.win,"ATuvPanel")==0)
         key="uvGradient"
-        y=316
+        y=344
     endif
     NVAR grad=root:Packages:AcademicToolbox:$key
     grad=pa.popNum

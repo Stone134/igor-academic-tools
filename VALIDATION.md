@@ -1,6 +1,26 @@
 # Validation
 
-## Current revision — 2026-10-16
+## Graph sizing and numeric ticks — 2026-10-19
+
+The updated procedure was loaded and compiled in the user's already-open Igor Pro 8 session. A development helper exercised the public style and checkbox functions using 11 synthetic points spanning 0–10000 seconds and 0 to −10 µA, with source current values stored in amperes.
+
+### Executed checks
+
+- Unchecked sizing applied the Thesis2 plot-area dimensions: 170.079 × 99.2126 points.
+- Checking the option removed the fixed width and height; resizing the graph window changed both plot-area dimensions.
+- Reapplying Thesis2 while free sizing was enabled kept the dimensions unlocked.
+- Unchecking restored the fixed Thesis2 dimensions.
+- Graph recreation text contained `tickUnit=1` and the fixed-notation thresholds.
+- All source current/time values and their A/s wave-unit metadata remained unchanged.
+- The actual Electrical/OECT checkbox was clicked, and the stored preference changed to 1.
+- Both panels were visually inspected; the new checkbox, color controls, and palette preview fit without overlap. The UV-vis panel reflected the shared checked state.
+- The graph was visually inspected before and after resizing: the left title read **Id (µA)**, the bottom title read **Time (s)**, and ticks showed **0, 2000, …, 10000**, without extra A or ks labels.
+
+Igor printed: `PASS: fixed/free sizing, checkbox callback, Thesis2 while free, plain ticks, raw values and units preserved.`
+
+These checks used synthetic data and focused on the requested sizing and tick-formatting changes. The user's experimental dataset and the full import/correction workflows were not rerun. The development helper is not bundled with the production procedure.
+
+## Simplified toolbox — 2026-10-16
 
 Procedure: [Academic_Toolbox.ipf at de8705a](https://github.com/Stone134/igor-academic-tools/blob/de8705a90e4dce3252b0e7e9d58f8cc7491b985a/Academic_Toolbox.ipf).
 
@@ -33,7 +53,7 @@ The current version has one Vg and one Vref overlay per graph. Multiple-sample o
 
 ## Historical notes — 2026-10-13 and earlier
 
-The following records are retained for provenance. References to old controls, helper functions, and pending tests apply to their respective revisions, not to the current README or guide.
+The following records are retained for provenance. References to old controls, helper functions, and pending tests apply to their respective revisions, not to the current README.
 
 ### Latest update: multiple-sample overlays and standalone Vg/time
 
@@ -76,4 +96,3 @@ The previous revision was loaded and compiled in Igor Pro 8 using hidden procedu
 - The separate OECT panel opened with transfer and steady-state controls.
 
 The old hard-coded validation-directory helpers were preserved and updated for fixed SI input semantics; their original fixture-based runs were not repeated in this update.
-

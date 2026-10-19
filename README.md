@@ -30,7 +30,7 @@ AT_UVPanel()
 | Add Vg or Vref to an Id/time graph | Retain native data and a shared wavelength grid |
 | Omit gate-step artifacts from Id and Ig copies | Keep raw spectra separate from corrected spectra |
 
-Both panels include **Apply Thesis2**, **Restore to default**, **Add legend**, **Recolor**, and **Curve color**.
+Both panels include **Apply Thesis2**, **Restore to default**, **Add legend**, **Recolor**, **Curve color**, and a **Free graph size (resize window)** checkbox.
 
 ## Electrical file naming
 
@@ -55,15 +55,33 @@ The experiment prefix before `s2` is omitted; spaces become underscores. Sample 
 
 ## Graph style and colors
 
-**Apply Thesis2** sets only these appearance properties:
+**Apply Thesis2** applies the following baseline appearance. New toolbox plots use the same style:
 
 ~~~igorpro
-ModifyGraph axThick=0.75,btLen=3,fSize=9,lsize=0.75,expand=2,font="Arial",tick=2,mirror=1,standoff=0,width=170.079,height=99.2126
+ModifyGraph axThick=0.75,btLen=3,fSize=9,lsize=0.75,expand=2,font="Arial",tick=2,standoff=0
+ModifyGraph tickUnit=1,lowTrip=1e-15,highTrip=1e15
 ~~~
 
-New toolbox plots use this style. When a real right or top axis is present, mirroring is applied only to available edges. Applying Thesis2 preserves unrelated existing settings and trace colors.
+Mirroring (`mirror=1`) is applied only to edges without a real opposite right/top axis. Applying Thesis2 preserves unrelated existing settings, axis ranges, display multipliers, and trace colors.
 
-**Restore to default** rebuilds a standalone curve graph using Igor's factory appearance. It retains the data, axis assignments, label text, error bars, and display offsets/multipliers. Custom axis ranges, formatting, legends, and other annotations are not retained; use **Add legend** afterward. Image, contour, and subwindow graphs are not supported by this reset.
+### Resize the graph freely
+
+Bring the intended graph to the front, then check **Free graph size (resize window)** under **Graph style and colors**. Drag the graph window's edges or corner to change width and height independently.
+
+- **Checked:** Igor uses automatic plot-area sizing (`width=0,height=0`), so the graph follows the window.
+- **Unchecked:** restores the fixed Thesis2 plot area, `width=170.079,height=99.2126` points.
+- Changing the checkbox affects the front graph immediately. New toolbox plots and **Apply Thesis2** honor the setting; other open graphs are not changed automatically.
+- The Electrical/OECT and UV-vis panels share this setting. It starts unchecked and is retained when you save the experiment.
+
+### Axis units and numbers
+
+Units appear in axis titles, such as **Id (µA)** and **Time (s)**, without extra unit text beside the tick labels. Ordinary measurement ranges use full numbers: for example, **1000** seconds instead of **1 ks**. Extremely small or large values outside the fixed-notation thresholds above may still use exponential notation.
+
+The extra **A** came from the current wave's ampere metadata, even though the plotted current was already multiplied by `1e6` for µA display. **ks** was Igor's automatic engineering prefix for thousands of seconds. This update changes tick formatting while preserving source values, wave units, and display multipliers.
+
+For an existing graph, click **Apply Thesis2** to apply the new tick formatting. If a panel was already open when you replaced the procedure, close and reopen it to show the checkbox.
+
+**Restore to default** rebuilds a standalone curve graph using Igor's factory appearance. It retains the data, axis assignments, label text, error bars, and display offsets/multipliers. Custom axis ranges, formatting, legends, and other annotations are not retained; use **Add legend** afterward. Image, contour, and subwindow graphs are not supported by this reset. Factory reset can restore automatic SI tick formatting; click **Apply Thesis2** afterward to restore the toolbox tick style and sizing preference.
 
 | Color option | Behavior |
 | --- | --- |
@@ -86,7 +104,6 @@ Correction enables **Use corrected currents when available** and switches graphs
 
 ## More information
 
-- [Detailed user guide](Academic_Toolbox_Guide.md): import options, UV–vis correction, palette values, data folders, and scripting.
 - [Validation notes](VALIDATION.md): checks actually performed and limitations.
 
 The separate OECT and Time Overlays menu groups, Extra Tools, adjustable Appearance controls, and Make RGB waves feature have been removed. Voltage-overlay buttons remain in Electrical/OECT; the current version supports one Vg and one Vref overlay per graph.
