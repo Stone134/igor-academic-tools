@@ -1,5 +1,24 @@
 # Validation
 
+## Reversed axes, Id precision and legend frames — 2026-10-20
+
+This revision enables Igor's reverse-axis flag for reversed fixed ranges, applies reversed Id/Vg/Vref directions through **Apply Thesis2**, sets linear Id ticks to one decimal with zero displayed as `0`, and removes legend frames. Very small current ranges retain an explicit power-of-ten scale so the tick labels remain meaningful.
+
+### Evidence collected in Igor on 2026-10-19
+
+- The revised production procedure and focused development helper compiled in the user's open Igor Pro 8 session before the final redraw adjustment described below.
+- A synthetic graph visibly displayed one-decimal ticks, `0` at zero, the **Id (µA)** title, and an explicit **×10⁻²** scale for a 0–0.025 µA range. The exponent remained visible with the toolbox's plain-number threshold settings.
+- The focused run passed its Id-direction check, then stopped at the Vg-direction assertion. Inspection after redraw showed the right axis had limits **0 to −0.5** and flags **`/A/E=1/N=1/R`**: the reversed direction and original autoscale options were present.
+- The assertion had read autoscaled bounds before Igor redrew the graph. The final source now calls `DoUpdate/W` before reading axis bounds for formatting, and the development helper redraws before checking ranges. This follows the documented `GetAxis` requirement for recently changed graphs.
+
+### Final verification status
+
+Source review covered the default reversal paths, waveform-based axis identification, the one-decimal/zero settings, explicit small-current scaling, and all legend creation/update paths. Only the requested graph-formatting code and documentation changed relative to the prior GitHub revision.
+
+**The final native test rerun is pending.** Computer control was unavailable when work resumed on 2026-10-20. The completed helper contains checks for Id/Vg/Vref reversal, unchanged time direction, preserved autoscale options, explicit non-reversed plot choices, decimal precision, zero formatting, preserved legend text, frame removal, and unchanged current data, but no full-pass result is claimed for this revision. The final redraw addition has not been recompiled in that session. Existing user graphs were not refreshed with the final saved source.
+
+The helper remains a development file and is not bundled with the production procedure. The earlier validation sections below describe their own revisions.
+
 ## Graph sizing and numeric ticks — 2026-10-19
 
 The updated procedure was loaded and compiled in the user's already-open Igor Pro 8 session. A development helper exercised the public style and checkbox functions using 11 synthetic points spanning 0–10000 seconds and 0 to −10 µA, with source current values stored in amperes.

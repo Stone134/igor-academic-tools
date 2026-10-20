@@ -62,7 +62,7 @@ ModifyGraph axThick=0.75,btLen=3,fSize=9,lsize=0.75,expand=2,font="Arial",tick=2
 ModifyGraph tickUnit=1,lowTrip=1e-15,highTrip=1e15
 ~~~
 
-Mirroring (`mirror=1`) is applied only to edges without a real opposite right/top axis. Applying Thesis2 preserves unrelated existing settings, axis ranges, display multipliers, and trace colors.
+Mirroring (`mirror=1`) is applied only to edges without a real opposite right/top axis. Applying Thesis2 preserves unrelated existing settings, range bounds, trace display multipliers, and trace colors. It also applies the electrical axis directions, tick formatting, and borderless legends described below.
 
 ### Resize the graph freely
 
@@ -73,13 +73,23 @@ Bring the intended graph to the front, then check **Free graph size (resize wind
 - Changing the checkbox affects the front graph immediately. New toolbox plots and **Apply Thesis2** honor the setting; other open graphs are not changed automatically.
 - The Electrical/OECT and UV-vis panels share this setting. It starts unchecked and is retained when you save the experiment.
 
-### Axis units and numbers
+### Axis direction, units and numbers
+
+**Id, Vg, and Vref axes are reversed by default.** Reversed fixed ranges also set Igor's **Reverse axis** checkbox, so switching to autoscale retains that direction. Time remains left to right. Plot dialogs that offer a reverse-axis choice still allow **No**; clicking **Apply Thesis2** later restores the reversed direction on recognized electrical axes. Existing autoscale mode, zero handling, and range algorithm are retained.
 
 Units appear in axis titles, such as **Id (µA)** and **Time (s)**, without extra unit text beside the tick labels. Ordinary measurement ranges use full numbers: for example, **1000** seconds instead of **1 ks**. Extremely small or large values outside the fixed-notation thresholds above may still use exponential notation.
 
+Linear **Id** ticks use **one decimal place**, such as `−2.0, −1.5, −1.0, −0.5`, with zero shown as **`0`**. The toolbox chooses a major-tick interval for the current range. After changing the range substantially, click **Apply Thesis2** again to recalculate that interval. Voltage and UV-vis axes retain their own tick precision; logarithmic current axes retain logarithmic tick formatting.
+
+For an Id range entirely below 0.1 µA in magnitude, ticks use one decimal plus an explicit power-of-ten scale. For example, a `0.005 µA` tick is displayed as `0.5` with **×10⁻²** shown on the axis. This avoids rounding every tick to `0.0`. Applying the style clears any separate axis prescale exponent so it cannot silently rescale the µA numbers a second time; source data and the trace's A-to-µA multiplier are unchanged.
+
 The extra **A** came from the current wave's ampere metadata, even though the plotted current was already multiplied by `1e6` for µA display. **ks** was Igor's automatic engineering prefix for thousands of seconds. This update changes tick formatting while preserving source values, wave units, and display multipliers.
 
-For an existing graph, click **Apply Thesis2** to apply the new tick formatting. If a panel was already open when you replaced the procedure, close and reopen it to show the checkbox.
+For an existing graph, click **Apply Thesis2** to apply the reversed electrical axes, tick formatting, and legend-frame removal. If a panel was already open when you replaced the procedure, close and reopen it to show the checkbox.
+
+### Legend borders
+
+New plot legends and **Add legend** use **no black rectangular frame**. **Apply Thesis2** also removes frames from existing legends while retaining their text, symbols, and positions. Other annotation types are unchanged.
 
 **Restore to default** rebuilds a standalone curve graph using Igor's factory appearance. It retains the data, axis assignments, label text, error bars, and display offsets/multipliers. Custom axis ranges, formatting, legends, and other annotations are not retained; use **Add legend** afterward. Image, contour, and subwindow graphs are not supported by this reset. Factory reset can restore automatic SI tick formatting; click **Apply Thesis2** afterward to restore the toolbox tick style and sizing preference.
 

@@ -1456,7 +1456,8 @@ Static Function AT_E_SetNiceAxis(gName, ax, lo, hi, reverse, zeroBase)
 		AT_E_NiceRange(lo, hi, a, b, st)
 	endif
 	if (reverse)
-		SetAxis/W=$gName $ax b, a
+		// /R also keeps Reverse axis checked when switching back to autoscale.
+		SetAxis/W=$gName/R $ax b, a
 	else
 		SetAxis/W=$gName $ax a, b
 	endif
@@ -1491,7 +1492,7 @@ End
 // Thesis2 with the requested free-size option and explicit-unit tick formatting.
 Function AT_E_ApplyLook(gName, doTraces)
     String gName
-    Variable doTraces // retained for existing callers
+    Variable doTraces // 1: explicit Apply Thesis2 also restores electrical axis direction
     if(strlen(gName)==0)
         gName=WinName(0,1)
     endif
@@ -1514,6 +1515,107 @@ Function AT_E_ApplyLook(gName, doTraces)
     if(WhichListItem("bottom",axes)>=0 && WhichListItem("top",axes)<0)
         ModifyGraph/W=$gName mirror(bottom)=1
     endif
+    AT_E_FormatAxes(gName,doTraces)
+    AT_UnframeLegends(gName)
+    return 0
+End
+
+// Recognize electrical quantities from plotted waves, not from an axis position.
+// This keeps time, wavelength and absorbance axes out of electrical formatting.
+Static Function AT_E_WaveKind(w)
+    WAVE/Z w
+    if(!WaveExists(w))
+        return 0
+    endif
+    String nm=NameOfWave(w)
+    if(strlen(AT_E_ColumnBase(nm,"DrainI"))>0 || stringmatch(nm,"SS_*_Id"))
+        return 1
+    endif
+    if(strlen(AT_E_ColumnBase(nm,"GateV"))>0 || strlen(AT_E_ColumnBase(nm,"Vref"))>0 || stringmatch(nm,"SS_*_Vg"))
+        return 2
+    endif
+    return 0
+End
+
+Static Function AT_E_AxisKind(gn,ax)
+    String gn,ax
+    String traces=TraceNameList(gn,";",1),tn,info
+    Variable i,kind=0,k
+    for(i=0;i<ItemsInList(traces);i+=1)
+        tn=StringFromList(i,traces)
+        info=TraceInfo(gn,tn,0)
+        if(cmpstr(StringByKey("YAXIS",info),ax)==0)
+            WAVE/Z yw=TraceNameToWaveRef(gn,tn)
+            k=AT_E_WaveKind(yw)
+        elseif(cmpstr(StringByKey("XAXIS",info),ax)==0)
+            WAVE/Z xw=XWaveRefFromTrace(gn,tn)
+            k=AT_E_WaveKind(xw)
+        else
+            continue
+        endif
+        if(k==1)
+            return 1
+        endif
+        kind=max(kind,k)
+    endfor
+    return kind
+End
+
+Static Function AT_E_FormatAxes(gn,reverseAxes)
+    String gn
+    Variable reverseAxes
+    // Autoscaled bounds are computed during redraw, not during SetAxis.
+    DoUpdate/W=$gn
+    String axes=AxisList(gn),ax,info,flags
+    Variable i,kind,lo,hi,a,b,step,exponent,scale,largest
+    for(i=0;i<ItemsInList(axes);i+=1)
+        ax=StringFromList(i,axes)
+        kind=AT_E_AxisKind(gn,ax)
+        if(kind==0)
+            continue
+        endif
+        info=AxisInfo(gn,ax)
+        GetAxis/W=$gn/Q $ax
+        lo=min(V_min,V_max); hi=max(V_min,V_max)
+        if(reverseAxes)
+            flags=StringByKey("SETAXISFLAGS",info)
+            if(strlen(flags)>0)
+                // Retain autoscale mode, zero handling and range algorithm.
+                flags=ReplaceString("/R",flags,"")+"/R"
+                Execute/Q "SetAxis/W="+PossiblyQuoteName(gn)+flags+" "+PossiblyQuoteName(ax)
+            else
+                SetAxis/W=$gn/R $ax hi,lo
+            endif
+        endif
+        if(kind==1 && NumberByKey("log(x)",info,"=")==0)
+            // One decimal, except zero. Small currents need an explicit exponent
+            // so distinct microamp values are not all rounded to 0.0.
+            AT_E_NiceRange(lo,hi,a,b,step)
+            largest=max(abs(lo),abs(hi))
+            exponent=0
+            if(largest>0 && largest<0.1)
+                exponent=floor(log(largest))
+            endif
+            scale=10^exponent
+            step=max(0.1,ceil(step/scale*10-1e-8)/10)
+            ModifyGraph/W=$gn userticks($ax)=0,prescaleExp($ax)=0,manTick($ax)={0,step,exponent,1},ZisZ($ax)=1,zapTZ($ax)=0
+        endif
+    endfor
+    return 0
+End
+
+// Only remove legend frames; retain custom legend text, position and symbols.
+Static Function AT_UnframeLegends(gn)
+    String gn
+    String annotations=AnnotationList(gn),an,info
+    Variable i
+    for(i=0;i<ItemsInList(annotations);i+=1)
+        an=StringFromList(i,annotations)
+        info=AnnotationInfo(gn,an)
+        if(cmpstr(StringByKey("TYPE",info),"Legend")==0)
+            Legend/W=$gn/C/N=$an/F=0
+        endif
+    endfor
     return 0
 End
 
@@ -1561,7 +1663,7 @@ Static Function AT_E_PutLegend(gName, leg)
 		return 0
 	endif
 	leg = RemoveEnding(leg, "\r")
-	Legend/W=$gName/N=legOE leg
+	Legend/W=$gName/N=legOE/F=0 leg
 End
 
 Function AT_U_LoadFolder()
@@ -2745,8 +2847,8 @@ Function AT_AddLegend(gn)
     if(strlen(gn)==0)
         return -1
     endif
-    // No font, frame, size, or position overrides.
-    Legend/W=$gn/N=legOE
+    // Borderless legend; leave font, size and position at their defaults.
+    Legend/W=$gn/N=legOE/F=0
     return 0
 End
 
