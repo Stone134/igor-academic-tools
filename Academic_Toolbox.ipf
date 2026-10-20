@@ -576,14 +576,7 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 		rightLabel="\\f02V\\BG\\M\\f00, \\f02V\\Bref\\M\\f00 (V)"
 	endif
 	Label/W=$gName right rightLabel
-	if(WhichListItem("ATvgOverlay",tl)>=0)
-		WAVE vg=TraceNameToWaveRef(gName,"ATvgOverlay")
-		key="\\s(ATvgOverlay) Vg: "+NameOfWave(vg)+"\r"
-	endif
-	if(WhichListItem("ATvrefOverlay",tl)>=0)
-		WAVE vr=TraceNameToWaveRef(gName,"ATvrefOverlay")
-		key+="\\s(ATvrefOverlay) Vref: "+NameOfWave(vr)
-	endif
+	key=AT_LegendText(gName,1)
 	Legend/W=$gName/C/N=ATvoltageLegend/F=0/A=RB RemoveEnding(key,"\r")
 	return 0
 End
@@ -1604,16 +1597,21 @@ Static Function AT_E_FormatAxes(gn,reverseAxes)
     return 0
 End
 
-// Only remove legend frames; retain custom legend text, position and symbols.
+// Refresh toolbox legend names and remove frames without moving annotations.
 Static Function AT_UnframeLegends(gn)
     String gn
-    String annotations=AnnotationList(gn),an,info
+    String annotations=AnnotationList(gn),an,info,leg
     Variable i
     for(i=0;i<ItemsInList(annotations);i+=1)
         an=StringFromList(i,annotations)
         info=AnnotationInfo(gn,an)
         if(cmpstr(StringByKey("TYPE",info),"Legend")==0)
-            Legend/W=$gn/C/N=$an/F=0
+            if(cmpstr(an,"legOE")==0 || cmpstr(an,"ATvoltageLegend")==0)
+                leg=AT_LegendText(gn,cmpstr(an,"ATvoltageLegend")==0)
+                Legend/W=$gn/C/N=$an/F=0 leg
+            else
+                Legend/W=$gn/C/N=$an/F=0
+            endif
         endif
     endfor
     return 0
@@ -1662,8 +1660,7 @@ Static Function AT_E_PutLegend(gName, leg)
 	if (strlen(leg) == 0)
 		return 0
 	endif
-	leg = RemoveEnding(leg, "\r")
-	Legend/W=$gName/N=legOE/F=0 leg
+	AT_AddLegend(gName)
 End
 
 Function AT_U_LoadFolder()
@@ -2844,12 +2841,91 @@ Function AT_AddLegend(gn)
     if(strlen(gn)==0)
         gn=WinName(0,1)
     endif
-    if(strlen(gn)==0)
+    if(strlen(gn)==0 || WinType(gn)!=1)
         return -1
     endif
-    // Borderless legend; leave font, size and position at their defaults.
-    Legend/W=$gn/N=legOE/F=0
+    String leg=AT_LegendText(gn,0)
+    if(strlen(leg)==0)
+        return 0
+    endif
+    // Named update retains an existing legend's location and text appearance.
+    if(WhichListItem("legOE",AnnotationList(gn))>=0)
+        Legend/W=$gn/C/N=legOE/F=0 leg
+    else
+        Legend/W=$gn/N=legOE/F=0 leg
+    endif
+    if(WhichListItem("ATvoltageLegend",AnnotationList(gn))>=0)
+        leg=AT_LegendText(gn,1)
+        Legend/W=$gn/C/N=ATvoltageLegend/F=0 leg
+    endif
     return 0
+End
+
+// One entry per data trace, regardless of the selected colour scheme.
+// Managed voltages have a separate key and must not appear twice.
+Static Function/S AT_LegendText(gn,overlays)
+    String gn
+    Variable overlays
+    String traces=TraceNameList(gn,";",1),tn,leg="",prefix=""
+    Variable i,isOverlay
+    for(i=0;i<ItemsInList(traces);i+=1)
+        tn=StringFromList(i,traces)
+        isOverlay=(cmpstr(tn,"ATvgOverlay")==0 || cmpstr(tn,"ATvrefOverlay")==0)
+        if(isOverlay!=overlays)
+            continue
+        endif
+        prefix=""
+        if(isOverlay)
+            prefix=SelectString(cmpstr(tn,"ATvgOverlay")==0,"Vref: ","Vg: ")
+        endif
+        leg+="\\s("+PossiblyQuoteName(tn)+") "+prefix+AT_TraceLegendName(gn,tn)+"\r"
+    endfor
+    return RemoveEnding(leg,"\r")
+End
+
+Static Function/S AT_TraceLegendName(gn,tn)
+    String gn,tn
+    WAVE/Z w=TraceNameToWaveRef(gn,tn)
+    if(!WaveExists(w))
+        return tn
+    endif
+    String nm=NameOfWave(w),samp=StringByKey("ATSample",note(w),"=",";"),cat=StringByKey("ATCategory",note(w),"=",";")
+    String base=StringByKey("ATBase",note(w),"=",";"),folder,candidate
+    Variable kind,i,found=0
+    if(strlen(samp)==0 || cmpstr(samp,"unknown")==0 || strlen(cat)==0)
+        for(kind=0;kind<2;kind+=1)
+            folder=SelectString(kind,"root:AT_Elec:","root:AT_UV:")
+            WAVE/Z/T bn=$(folder+"BaseName"),ct=$(folder+"Category"),sp=$(folder+"Sample")
+            if(!WaveExists(bn) || !WaveExists(ct) || !WaveExists(sp))
+                continue
+            endif
+            for(i=0;i<numpnts(bn);i+=1)
+                candidate=bn[i]
+                if(cmpstr(base,candidate)==0 || stringmatch(nm,"*_"+candidate) || cmpstr(nm,candidate+"_Abs")==0 || cmpstr(nm,candidate+"_Absc")==0)
+                    samp=sp[i]; cat=ct[i]; base=candidate
+                    found=1
+                    break
+                endif
+            endfor
+            if(found)
+                break
+            endif
+        endfor
+    endif
+    if(strlen(samp)==0 || cmpstr(samp,"unknown")==0)
+        AT_E_FindSample(nm,samp)
+    endif
+    if(strlen(samp)>0 && cmpstr(samp,"unknown")!=0)
+        if(strlen(cat)==0)
+            cat=AT_TraceCategory(gn,tn)
+        endif
+        return samp+"_"+ReplaceString(" ",cat,"_")
+    endif
+    // A file without an s# token has no sample number to invent.
+    if(strlen(base)>0)
+        return base
+    endif
+    return nm
 End
 
 // Rebuild the same plot with Igor factory defaults. Data, axis assignments,
