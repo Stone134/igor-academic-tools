@@ -1,5 +1,22 @@
 # Validation
 
+## Continuous gate-step correction — 2026-10-30
+
+The User Procedures implementation was compiled and tested in native Igor Pro 8 on October 30. An older full copy in Igor Procedures still used NaN omission and conflicted with the latest procedure (`Duplicate constant: kAT_E_NPAL`). Replacing that auto-loaded copy with the small include loader resolved the conflict. `FunctionPath("AT_E_CorrectOne")` confirmed the active implementation was the maintained User Procedures file, with exactly one implementation and one loader in the procedure list.
+
+The bundled [AT_GateCompaction_Test.ipf](validation/AT_GateCompaction_Test.ipf) compiled and `AT_TestGateCompaction()` returned **0 failures**, with all **23 assertions passing**:
+
+- Three five-point Vg plateaus with two points removed per transition retained raw rows `[0,1,2,3,4,7,8,9,12,13,14]`. The eleven consecutive display-time slots produced cumulative shifts of two and four sample positions.
+- Id, Ig, Vg and Vref retained the same rows; SourceTime and SourceIndex matched the original acquisition timestamps and row indices.
+- Existing Id and Ig graph X/Y waves and both managed voltage overlays switched to aligned corrected waves.
+- Repeating correction did not remove additional rows. Raw values, lengths and current-wave notes remained unchanged.
+- Unequal optional-column lengths and invalid settings were rejected before overwriting a valid correction.
+- No-change data, overlapping removal intervals, a final-row transition, and sub-tolerance Vg noise behaved as expected.
+
+The test removed its synthetic graph and waves. Its procedure was then unloaded and the remaining toolbox compiled successfully again. Experimental files were not loaded or corrected during this run. This verifies the gate-step correction and graph-refresh behavior; it does not claim a fresh full regression of unrelated import, UV-vis, styling, or all dialog workflows.
+
+The November 2 repository update publishes the exact production source and regression procedure from that run, plus installation instructions and the include loader. It preserves the historical validation records below. Old NaN-corrected data require rerunning **Correct Id / Ig** after upgrading.
+
 ## Reversed axes, Id precision and legend frames — 2026-10-20
 
 This revision enables Igor's reverse-axis flag for reversed fixed ranges, applies reversed Id/Vg/Vref directions through **Apply Thesis2**, sets linear Id ticks to one decimal with zero displayed as `0`, and removes legend frames. Very small current ranges retain an explicit power-of-ten scale so the tick labels remain meaningful.

@@ -5,7 +5,7 @@
 // Academic Toolbox, simplified 2026-10-16. Igor Pro 8+.
 // Macros: Electrical / OECT and UV-vis. AT_Panel() opens Electrical / OECT.
 // New plots use Thesis2, optional free sizing, and plain numeric tick labels.
-// Current correction omits points with NaN in COPIES; raw data and X alignment stay intact.
+// Current correction removes gate-step rows and compacts aligned COPIES; raw data stay intact.
 // Exact palette swatches are available from Curve color in either panel.
 Constant kAT_E_NPAL=8
 StrConstant ksAT_E_PAL="0,114,178;213,94,0;0,158,115;204,121,167;230,159,0;86,180,233;140,86,75;90,90,90"
@@ -381,7 +381,7 @@ Function AT_E_PlotTransient()
 
 	for (i = 0; i < m; i += 1)
 		WAVE/Z wy = $AT_E_CurrentPath(bnw[idx[i]],"DrainI")
-		WAVE/Z wx = $AT_E_ColumnPath(bnw[idx[i]],"Time")
+		WAVE/Z wx = $AT_E_CompanionPath(bnw[idx[i]],"Time",wy)
 		if (!WaveExists(wx) || !WaveExists(wy))
 			Print "Skipped missing Time/DrainI: "+bnw[idx[i]]
 			continue
@@ -473,7 +473,7 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 			continue
 		endif
 		String ibase=AT_E_ColumnBase(NameOfWave(iy),"DrainI")
-		if(cmpstr(GetWavesDataFolder(ix,2),AT_E_ColumnPath(ibase,"Time"))!=0)
+		if(cmpstr(GetWavesDataFolder(ix,2),AT_E_CompanionPath(ibase,"Time",iy))!=0)
 			continue
 		endif
 		if(cmpstr(StringByKey("YAXIS",info),"left")==0 && cmpstr(StringByKey("XAXIS",info),"bottom")==0)
@@ -503,7 +503,7 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 		suffix="_Vref"
 		overlay="ATvrefOverlay"
 	endif
-	WAVE/Z wy=$AT_E_ColumnPath(base,suffix[1,strlen(suffix)-1])
+	WAVE/Z wy=$AT_E_CompanionPath(base,suffix[1,strlen(suffix)-1],iy)
 	if(!WaveExists(wy))
 		DoAlert 0,"The selected sample has no "+suffix[1,strlen(suffix)-1]+" column."
 		return -1
@@ -526,7 +526,7 @@ Function AT_E_AddVoltage(kind,[gName,currentTrace])
 			if(!WaveExists(rightWave))
 				return -1
 			endif
-			if(cmpstr(GetWavesDataFolder(rightWave,1),"root:AT_Elec:Data:")!=0 || (!(strlen(AT_E_ColumnBase(NameOfWave(rightWave),"GateV"))>0) && !(strlen(AT_E_ColumnBase(NameOfWave(rightWave),"Vref"))>0)))
+			if((cmpstr(GetWavesDataFolder(rightWave,1),"root:AT_Elec:Data:")!=0 && cmpstr(GetWavesDataFolder(rightWave,1),"root:AT_Elec:Corr:")!=0) || (!(strlen(AT_E_ColumnBase(NameOfWave(rightWave),"GateV"))>0) && !(strlen(AT_E_ColumnBase(NameOfWave(rightWave),"Vref"))>0)))
 				DoAlert 0,"The right axis contains data other than toolbox GateV/Vref. Use a graph with a free or voltage-only right axis."
 				return -1
 			endif
@@ -761,9 +761,12 @@ Function AT_E_PlotTransfer()
 
 	for (i = 0; i < m; i += 1)
 		WAVE/Z wy = $AT_E_CurrentPath(bnw[idx[i]],"DrainI")
-		WAVE/Z wx = $AT_E_ColumnPath(bnw[idx[i]],"GateV")
+		WAVE/Z wx = $AT_E_CompanionPath(bnw[idx[i]],"GateV",wy)
 		if (!WaveExists(wx) || !WaveExists(wy))
 			continue									// no gate column in this file
+		endif
+		if(numpnts(wx)==0 || numpnts(wx)!=numpnts(wy))
+			continue
 		endif
 		AppendToGraph/W=$gName wy vs wx
 		tn = NameOfWave(wy)
@@ -917,7 +920,7 @@ Function AT_E_PlotSteadyState()
 				continue
 			endif
 			WAVE/Z wI = $AT_E_CurrentPath(bnw[i],"DrainI")
-			WAVE/Z wG = $AT_E_ColumnPath(bnw[i],"GateV")
+			WAVE/Z wG = $AT_E_CompanionPath(bnw[i],"GateV",wI)
 			if (!WaveExists(wI) || !WaveExists(wG))
 				continue
 			endif
@@ -3216,6 +3219,19 @@ Static Function/S AT_E_CurrentPath(base,column)
     return AT_E_ColumnPath(base,column)
 End
 
+// Choose X/voltage data from the same rows as the actual current wave.
+// Old NaN-based corrections still use raw X until correction is run again.
+Static Function/S AT_E_CompanionPath(base,column,current)
+    String base,column
+    WAVE/Z current
+    if(WaveExists(current))
+        if(cmpstr(GetWavesDataFolder(current,1),"root:AT_Elec:Corr:")==0 && cmpstr(StringByKey("ATCorrection",note(current),"=",";"),"gate-step compaction")==0)
+            return "root:AT_Elec:Corr:"+PossiblyQuoteName(column+"_"+base)
+        endif
+    endif
+    return AT_E_ColumnPath(base,column)
+End
+
 // Start at the first sample carrying the NEW GateV. Adjacent masks are unioned.
 // No points are removed at the beginning unless a recorded gate change occurs.
 Function AT_E_GateMask(vg,omit,tol,mask)
@@ -3242,36 +3258,145 @@ Function AT_E_CorrectOne(base,omit,tol)
     String base
     Variable omit,tol
     WAVE/Z vg=$AT_E_ColumnPath(base,"GateV")
-    if(!WaveExists(vg))
+    if(!WaveExists(vg) || numpnts(vg)==0)
         return -1
     endif
     Make/FREE/D/N=0 mask
-    Variable changes=AT_E_GateMask(vg,omit,tol,mask),i,done=0
+    Variable changes=AT_E_GateMask(vg,omit,tol,mask),i,j,done=0,n=numpnts(vg)
     if(changes<0)
         return -1
     endif
-    NewDataFolder/O root:AT_Elec:Corr
-    String column,dest
-    for(i=0;i<2;i+=1)
-        column=StringFromList(i,"DrainI;GateI")
+    // Validate the whole aligned bundle before overwriting any earlier correction.
+    String columns="DrainI;GateI;Time;GateV;Vref",column,dest
+    for(i=0;i<ItemsInList(columns);i+=1)
+        column=StringFromList(i,columns)
         WAVE/Z raw=$AT_E_ColumnPath(base,column)
         if(!WaveExists(raw))
             continue
         endif
-        if(numpnts(raw)!=numpnts(vg))
+        if(numpnts(raw)!=n)
             Print "Skipped unequal GateV/"+column+" lengths: "+base
+            return -1
+        endif
+        done+=(i<2)
+    endfor
+    if(done==0)
+        return 0
+    endif
+    Variable removed=sum(mask),kept=n-removed
+    Make/FREE/D/N=(kept) keep
+    j=0
+    for(i=0;i<n;i+=1)
+        if(!mask[i])
+            keep[j]=i
+            j+=1
+        endif
+    endfor
+    NewDataFolder/O root:AT_Elec:Corr
+    String correction="ATCorrection=gate-step compaction;ATRemovePoints="+num2istr(omit)+";ATToleranceV="+num2str(tol)+";ATRemovedTotal="+num2istr(removed)+";"
+    for(i=0;i<ItemsInList(columns);i+=1)
+        column=StringFromList(i,columns)
+        WAVE/Z raw=$AT_E_ColumnPath(base,column)
+        if(!WaveExists(raw))
             continue
         endif
         dest="root:AT_Elec:Corr:"+PossiblyQuoteName(column+"_"+base)
         Duplicate/O raw,$dest
         WAVE corrected=$dest
-        Redimension/D corrected
-        corrected=mask[p] ? NaN : raw[p]
-        Note corrected,"ATCorrection=gate-step omission;ATRemovePoints="+num2istr(omit)+";ATToleranceV="+num2str(tol)+";ATSource="+GetWavesDataFolder(raw,2)+";"
-        done+=1
+        Redimension/D/N=(kept) corrected
+        corrected=raw[keep[p]]
+        Note/NOCR corrected,";"+correction+"ATSource="+GetWavesDataFolder(raw,2)+";"
+        if(cmpstr(column,"Time")==0)
+            // Keep true acquisition times for reference, then close the display
+            // gaps by assigning the retained points to the first 'kept' time slots.
+            dest="root:AT_Elec:Corr:"+PossiblyQuoteName("SourceTime_"+base)
+            Duplicate/O corrected,$dest
+            corrected=raw[p]
+            Note/NOCR corrected,";ATTimeAxis=compressed sample positions;"
+        endif
     endfor
-    Print base+": "+num2istr(changes)+" gate changes; "+num2istr(sum(mask))+" points omitted in "+num2istr(done)+" current wave(s)."
+    dest="root:AT_Elec:Corr:"+PossiblyQuoteName("SourceIndex_"+base)
+    Duplicate/O keep,$dest
+    WAVE sourceIndex=$dest
+    Note sourceIndex,correction+"ATIndexMeaning=zero-based raw row;"
+    Print base+": "+num2istr(changes)+" gate changes; "+num2istr(removed)+" rows removed and remaining points shifted left in "+num2istr(done)+" current wave(s)."
     return done
+End
+
+// Recognize only this sample's raw/corrected canonical waves, including old names.
+Static Function/S AT_E_TraceColumn(w,base,columns)
+    WAVE/Z w
+    String base,columns
+    if(!WaveExists(w))
+        return ""
+    endif
+    String folder=GetWavesDataFolder(w,1),column
+    if(cmpstr(folder,"root:AT_Elec:Data:")!=0 && cmpstr(folder,"root:AT_Elec:Corr:")!=0)
+        return ""
+    endif
+    Variable i
+    for(i=0;i<ItemsInList(columns);i+=1)
+        column=StringFromList(i,columns)
+        if(cmpstr(AT_E_ColumnBase(NameOfWave(w),column),base)==0)
+            return column
+        endif
+    endfor
+    return ""
+End
+
+// Replace paired X/Y waves, then update this sample's managed voltage overlays.
+// Independent raw-voltage graphs and unrelated/custom X waves are left alone.
+Function AT_E_RefreshCorrectedGraphs(base)
+    String base
+    String graphs=WinList("*",";","WIN:1"),gn,tl,tn,column,xcolumn,ypath,xpath
+    Variable g,k,pass,currentTime,changed
+    for(g=0;g<ItemsInList(graphs);g+=1)
+        gn=StringFromList(g,graphs)
+        currentTime=0
+        changed=0
+        for(pass=0;pass<2;pass+=1)
+            tl=TraceNameList(gn,";",1)
+            for(k=ItemsInList(tl)-1;k>=0;k-=1)
+                tn=StringFromList(k,tl)
+                if(pass==1 && (!currentTime || (cmpstr(tn,"ATvgOverlay")!=0 && cmpstr(tn,"ATvrefOverlay")!=0)))
+                    continue
+                endif
+                WAVE/Z yw=TraceNameToWaveRef(gn,tn),xw=XWaveRefFromTrace(gn,tn)
+                column=AT_E_TraceColumn(yw,base,SelectString(pass,"DrainI;GateI","GateV;Vref"))
+                if(strlen(column)==0)
+                    continue
+                endif
+                xcolumn=AT_E_TraceColumn(xw,base,"Time;GateV;Vref")
+                if(WaveExists(xw) && strlen(xcolumn)==0)
+                    Print "Replot to use compacted data with custom X: "+gn+", "+tn
+                    continue
+                endif
+                ypath="root:AT_Elec:Corr:"+PossiblyQuoteName(column+"_"+base)
+                WAVE/Z newY=$ypath
+                if(!WaveExists(newY))
+                    continue
+                endif
+                if(WaveExists(xw))
+                    xpath="root:AT_Elec:Corr:"+PossiblyQuoteName(xcolumn+"_"+base)
+                    WAVE/Z newX=$xpath
+                    if(!WaveExists(newX) || numpnts(newX)!=numpnts(newY))
+                        continue
+                    endif
+                    // Do X first: replacing Y can change a default trace name.
+                    ReplaceWave/X/W=$gn trace=$tn,newX
+                endif
+                ReplaceWave/W=$gn trace=$tn,newY
+                changed=1
+                if(pass==0 && cmpstr(xcolumn,"Time")==0)
+                    currentTime=1
+                endif
+            endfor
+        endfor
+        if(changed && WhichListItem("legOE",AnnotationList(gn))>=0)
+            AT_AddLegend(gn)
+        endif
+    endfor
+    return 0
 End
 
 Function AT_E_CorrectCurrents()
@@ -3281,7 +3406,7 @@ Function AT_E_CorrectCurrents()
         return -1
     endif
     Variable omit=1,tol=1e-4
-    Prompt omit,"Number of points to omit at each gate change (integer 1-10)"
+    Prompt omit,"Points to remove and close up at each gate change (integer 1-10)"
     Prompt tol,"Gate-change tolerance (V)"
     DoPrompt "Correct Id and Ig (raw data preserved)",omit,tol
     if(V_flag)
@@ -3296,40 +3421,24 @@ Function AT_E_CorrectCurrents()
     if(n<=0)
         return -1
     endif
+    Make/FREE/N=(n) succeeded=0
+    Variable result
     for(i=0;i<n;i+=1)
-        done+=max(0,AT_E_CorrectOne(bn[idx[i]],omit,tol))
+        result=AT_E_CorrectOne(bn[idx[i]],omit,tol)
+        succeeded[i]=(result>0)
+        done+=max(0,result)
     endfor
+    if(done==0)
+        return 0
+    endif
     AT_E_InitPrefs()
     NVAR use=root:Packages:AcademicToolbox:useCorrected
     use=1
-    // Existing plots of selected raw current waves are switched to the copies.
-    String graphs=WinList("*",";","WIN:1"),gn,tl,tn,base,col,newPath
-    Variable j,k,q
-    for(j=0;j<ItemsInList(graphs);j+=1)
-        gn=StringFromList(j,graphs)
-        tl=TraceNameList(gn,";",1)
-        for(k=0;k<ItemsInList(tl);k+=1)
-            tn=StringFromList(k,tl)
-            WAVE/Z plotted=TraceNameToWaveRef(gn,tn)
-            if(!WaveExists(plotted))
-                continue
-            endif
-            for(q=0;q<n;q+=1)
-                base=bn[idx[q]]
-                for(i=0;i<2;i+=1)
-                    col=StringFromList(i,"DrainI;GateI")
-                    WAVE/Z original=$AT_E_ColumnPath(base,col)
-                    newPath=AT_E_CurrentPath(base,col)
-                    if(WaveExists(original) && cmpstr(GetWavesDataFolder(plotted,2),GetWavesDataFolder(original,2))==0)
-                        WAVE/Z copy=$newPath
-                        if(WaveExists(copy))
-                            ReplaceWave/W=$gn trace=$tn,copy
-                        endif
-                    endif
-                endfor
-            endfor
-        endfor
+    for(i=0;i<n;i+=1)
+        if(succeeded[i])
+            AT_E_RefreshCorrectedGraphs(bn[idx[i]])
+        endif
     endfor
-    Print "Corrected copies: root:AT_Elec:Corr. NaNs omit artifacts without shifting Time/GateV. Uncheck Use corrected to use raw currents in new plots."
+    Print "Corrected copies: root:AT_Elec:Corr. Deleted rows are closed up on a shorter time axis; Id/Ig/GateV/Vref remain aligned. SourceTime/SourceIndex retain acquisition-time/row mapping. Uncheck Use corrected for raw data in new plots."
     return done
 End

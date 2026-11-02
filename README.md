@@ -20,6 +20,8 @@ AT_UVPanel()
 
 `AT_Panel()` remains an alias for the Electrical/OECT panel. For reuse across experiments, place the file in Igor's User Procedures folder and add `#include "Academic_Toolbox"` to the experiment's main procedure.
 
+For automatic loading, keep the full `Academic_Toolbox.ipf` in **User Procedures** and place [Academic_Toolbox_Loader.ipf](installation/Academic_Toolbox_Loader.ipf) in **Igor Procedures**. The loader includes the maintained User Procedures file. Back up and remove any older full toolbox copy from **Igor Procedures**; loading both full copies can cause duplicate-constant/function errors or leave an older correction active. Restart Igor or unload the older procedure before compiling the loader.
+
 ## Panels
 
 | Electrical / OECT | UV-vis |
@@ -28,7 +30,7 @@ AT_UVPanel()
 | Plot Id vs time, Vref vs time, and Id vs Vg | Plot raw or corrected spectra |
 | Calculate steady-state Id vs Vg | Correct detector jumps and a reference baseline |
 | Add Vg or Vref to an Id/time graph | Retain native data and a shared wavelength grid |
-| Omit gate-step artifacts from Id and Ig copies | Keep raw spectra separate from corrected spectra |
+| Remove gate-step artifacts and close gaps in Id and Ig copies | Keep raw spectra separate from corrected spectra |
 
 Both panels include **Apply Thesis2**, **Restore to default**, **Add legend**, **Recolor**, **Curve color**, and a **Free graph size (resize window)** checkbox.
 
@@ -108,9 +110,15 @@ The Electrical and UV-vis panels remember their color choices separately. **Reco
 2. Choose **1–10 points** and a gate-change tolerance (default **0.0001 V**).
 3. Select the files to correct.
 
-Starting at the first point carrying the new gate voltage, the selected current points are replaced by **NaN in separate corrected copies**. Rows are not deleted: Time and GateV stay aligned, and the raw currents remain unchanged. Overlapping omission intervals are combined; the start of a file is not masked without a recorded gate change.
+Starting at the first point carrying each new gate voltage, correction removes the selected rows from **separate corrected copies** and shifts all retained points into consecutive earlier time slots. The shift accumulates at every transition: removing two points moves the second Vg segment left by two sample positions, the third by four, and so on. Overlapping removal intervals are combined and counted once; the start of a file is preserved without a recorded gate change. Raw data remain unchanged.
 
-Correction enables **Use corrected currents when available** and switches graphs directly plotting the selected raw currents to their corrected copies. Uncheck the option and create a new plot to use raw currents again; the checkbox does not revert existing plots. Repeating correction replaces the selected corrected copies from raw data. Derived steady-state curves must be regenerated.
+Corrected Id, Ig, GateV and Vref retain the same rows in `root:AT_Elec:Corr`. Corrected Time uses the first retained-count slots of the raw Time wave, shortening the displayed time axis and closing the deleted intervals without inserting NaNs. `SourceTime` and `SourceIndex` preserve each retained point's acquisition timestamp and zero-based raw row.
+
+Correction enables **Use corrected currents when available** and switches existing toolbox current graphs to paired corrected X/Y waves. Managed Vg/Vref overlays follow the corrected time axis. Traces using custom X waves are reported for manual replotting. New time, transfer and steady-state plots select aligned companion waves. Uncheck the option and create a new plot to use raw currents again; the checkbox does not revert existing plots. Repeating correction rebuilds the selected copies from raw data, so shifts do not accumulate between runs. Derived steady-state curves must be regenerated.
+
+After upgrading from the NaN-based version, run **Correct Id / Ig** again to regenerate previously corrected data. The compressed Time wave represents display sample positions; use `SourceTime` when the original acquisition timestamps are needed.
+
+The native regression procedure [AT_GateCompaction_Test.ipf](validation/AT_GateCompaction_Test.ipf) can be opened and compiled alongside the toolbox. Run `AT_TestGateCompaction()`; zero means all checks passed. It uses uniquely named synthetic fixtures and removes its own graph and waves afterward.
 
 ## More information
 
