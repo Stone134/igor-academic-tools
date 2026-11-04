@@ -1207,11 +1207,14 @@ End
 // =====================================================================
 
 //  labels[] are shown, pick[] goes in as the default state and comes
-//  back as the user's choice.  Returns 0 on Plot, -1 on Cancel.
-Static Function AT_E_PickList(titleStr, labels, pick)
-	String titleStr
+//  back as the user's choice.  Returns 0 on acceptance, -1 on Cancel.
+Static Function AT_E_PickList(titleStr, labels, pick, [buttonTitle])
+	String titleStr, buttonTitle
 	WAVE/T labels
 	WAVE pick
+	if (ParamIsDefault(buttonTitle))
+		buttonTitle = "Plot"
+	endif
 	Variable n = numpnts(labels)
 	if (n == 0)
 		return -1
@@ -1233,7 +1236,7 @@ Static Function AT_E_PickList(titleStr, labels, pick)
 	Button bAll,  win=AT_pick, pos={10, 408}, size={80, 26}, proc=AT_E_PickButton, title="All"
 	Button bNone, win=AT_pick, pos={96, 408}, size={80, 26}, proc=AT_E_PickButton, title="None"
 	Button bPCan, win=AT_pick, pos={368, 408}, size={86, 26}, proc=AT_E_PickButton, title="Cancel"
-	Button bPOK,  win=AT_pick, pos={462, 408}, size={86, 26}, proc=AT_E_PickButton, title="Plot"
+	Button bPOK,  win=AT_pick, pos={462, 408}, size={86, 26}, proc=AT_E_PickButton, title=buttonTitle
 	PauseForUser AT_pick
 
 	NVAR res = root:Packages:AcademicToolbox:pickResult
@@ -1272,16 +1275,23 @@ End
 
 //  Narrows idx[] to the rows the user ticked.  Returns the new count,
 //  or -1 if cancelled / nothing chosen.
-Static Function AT_E_PickFrom(idx, bnw, ctw, spw)
+Static Function AT_E_PickFrom(idx, bnw, ctw, spw, [titleStr, buttonTitle])
 	WAVE idx
 	WAVE/T bnw, ctw, spw
+	String titleStr, buttonTitle
+	if (ParamIsDefault(titleStr))
+		titleStr = "Choose the data to plot"
+	endif
+	if (ParamIsDefault(buttonTitle))
+		buttonTitle = "Plot"
+	endif
 	Variable i, m = numpnts(idx), mm = 0
 	Make/FREE/T/N=(m) labs
 	Make/FREE/N=(m) pick = 1
 	for (i = 0; i < m; i += 1)
 		labs[i] = bnw[idx[i]] + "        [ " + ctw[idx[i]] + " ]"
 	endfor
-	if (AT_E_PickList("Choose the data to plot", labs, pick) != 0)
+	if (AT_E_PickList(titleStr, labs, pick, buttonTitle=buttonTitle) != 0)
 		return -1
 	endif
 	for (i = 0; i < m; i += 1)
@@ -3417,7 +3427,7 @@ Function AT_E_CorrectCurrents()
         return -1
     endif
     Make/FREE/N=(numpnts(bn)) idx=p
-    Variable n=AT_E_PickFrom(idx,bn,ct,sp),i,done=0
+    Variable n=AT_E_PickFrom(idx,bn,ct,sp,titleStr="Choose the data to correct",buttonTitle="OK"),i,done=0
     if(n<=0)
         return -1
     endif
